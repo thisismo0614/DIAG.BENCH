@@ -47,8 +47,33 @@ jobs:
           "version=$pkgVersion" >> $env:GITHUB_OUTPUT
           "exe_name=DIAG.BENCH-Setup-$pkgVersion-win-x64.exe" >> $env:GITHUB_OUTPUT
 
+      # electron postinstall(~106MB 다운로드)과 electron-builder 리소스 다운로드는
+      # 일시적 네트워크 오류(socket hang up)로 실패한 전례가 있다. 캐시 + 재시도로 방어한다.
+      # (다운로드를 건너뛰거나 실패를 무시하지는 않는다 — 재시도만 한다)
+      - name: electron 버전 확인 (캐시 키용)
+        id: ev
+        shell: bash
+        run: echo "version=$(node -p "require('./package-lock.json').packages['node_modules/electron'].version")" >> $GITHUB_OUTPUT
+
+      - name: electron 바이너리 캐시
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.cache/electron
+          key: electron-${{ runner.os }}-${{ steps.ev.outputs.version }}
+
+      - name: electron-builder 캐시
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.cache/electron-builder
+          key: electron-builder-${{ runner.os }}-${{ steps.ev.outputs.version }}
+
       - name: 의존성 설치
-        run: npm ci
+        run: node scripts/retry.js npm ci
+        env:
+          electron_config_cache: ${{ github.workspace }}/.cache/electron
+          NPM_CONFIG_FETCH_RETRIES: '5'
+          NPM_CONFIG_FETCH_RETRY_MINTIMEOUT: '20000'
+          NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: '120000'
 
       # ---------- 2. 테스트 (실패하면 배포하지 않는다) ----------
       - name: 회귀 테스트
@@ -56,7 +81,10 @@ jobs:
 
       # ---------- 3. 빌드 ----------
       - name: 설치 파일 빌드
-        run: npm run build:win
+        run: node scripts/retry.js npm run build:win
+        env:
+          electron_config_cache: ${{ github.workspace }}/.cache/electron
+          ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
 
       - name: 산출물 검증
         shell: pwsh

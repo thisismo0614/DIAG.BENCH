@@ -13,3 +13,6 @@ website/dist/
 # ⚠ 슬래시로 시작해야 최상위에만 적용된다. "test-*.js"로 쓰면
 #    scripts/test-rules.js 까지 무시돼서 CI의 테스트 단계가 깨진다.
 /test-*.js
+
+# CI/로컬에서 electron·electron-builder 바이너리 캐시가 여기에 생긴다
+.cache/
