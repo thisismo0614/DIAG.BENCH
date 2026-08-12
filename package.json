@@ -1,0 +1,70 @@
+{
+  "name": "diag-bench-desktop",
+  "version": "0.17.0",
+  "description": "DIAG.BENCH — 시스템 하드웨어 진단 데스크톱 앱 프로토타입",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "test-engine": "node scripts/test-engine.js",
+    "test-rules": "node scripts/test-rules.js",
+    "build:win": "electron-builder --win --x64",
+    "build:win-portable": "electron-builder --win dir --x64"
+  },
+  "author": "DIAG.BENCH",
+  "license": "MIT",
+  "homepage": "https://github.com/OWNER/diag-bench",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/OWNER/diag-bench.git"
+  },
+  "bugs": {
+    "url": "https://github.com/OWNER/diag-bench/issues"
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4",
+    "systeminformation": "^5.33.1"
+  },
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.diagbench.desktop",
+    "productName": "DIAG.BENCH",
+    "directories": {
+      "output": "dist"
+    },
+    "artifactName": "DIAG.BENCH-Setup-${version}-win-${arch}.${ext}",
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "!node_modules/**/*",
+      "node_modules/systeminformation/**/*",
+      "node_modules/qrcode/**/*",
+      "node_modules/pngjs/**/*",
+      "node_modules/dijkstrajs/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/smartmontools",
+        "to": "smartmontools",
+        "filter": ["**/*"]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}

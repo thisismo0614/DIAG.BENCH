@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{PAGE_TITLE}}</title>
+<meta name="description" content="{{PAGE_DESC}}">
+<link rel="canonical" href="{{CANONICAL}}">
+
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="{{PRODUCT_NAME}}">
+<meta property="og:title" content="{{PAGE_TITLE}}">
+<meta property="og:description" content="{{PAGE_DESC}}">
+<meta property="og:url" content="{{CANONICAL}}">
+<meta property="og:locale" content="ko_KR">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="{{PAGE_TITLE}}">
+<meta name="twitter:description" content="{{PAGE_DESC}}">
+
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="styles.css">
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "{{PRODUCT_NAME}}",
+  "applicationCategory": "UtilitiesApplication",
+  "operatingSystem": "Windows 10, Windows 11",
+  "description": "{{DESCRIPTION}}",
+  "url": "{{SITE_URL}}",
+  "downloadUrl": "{{DOWNLOAD_URL}}",
+  "license": "https://opensource.org/licenses/MIT",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "KRW" }
+}
+</script>
+{{ANALYTICS}}
+</head>
+<body>
+
+<a class="skip-link" href="#main">본문으로 건너뛰기</a>
+
+<header class="site-header">
+  <nav class="nav" aria-label="주요 메뉴">
+    <a class="brand" href="index.html">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-name">{{PRODUCT_NAME}}</span>
+    </a>
+    <ul class="nav-links">
+      <li><a href="index.html#features">기능</a></li>
+      <li><a href="download.html">다운로드</a></li>
+      <li><a href="faq.html">FAQ</a></li>
+      <li><a href="{{REPO_URL}}" rel="noopener">GitHub</a></li>
+    </ul>
+  </nav>
+</header>
+
+<main id="main">
+{{CONTENT}}
+</main>
+
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div class="footer-brand">
+      <span class="brand-name">{{PRODUCT_NAME}}</span>
+      <p class="footer-tagline">{{TAGLINE}}</p>
+    </div>
+    <nav class="footer-cols" aria-label="푸터 메뉴">
+      <div>
+        <h2>제품</h2>
+        <ul>
+          <li><a href="download.html">다운로드</a></li>
+          <li><a href="index.html#features">기능</a></li>
+          <li><a href="faq.html">FAQ</a></li>
+        </ul>
+      </div>
+      <div>
+        <h2>프로젝트</h2>
+        <ul>
+          <li><a href="{{REPO_URL}}" rel="noopener">소스 코드</a></li>
+          <li><a href="{{RELEASES_URL}}" rel="noopener">릴리스</a></li>
+          <li><a href="{{ISSUES_URL}}" rel="noopener">버그 신고</a></li>
+          <li><a href="{{README_URL}}" rel="noopener">문서</a></li>
+        </ul>
+      </div>
+      <div>
+        <h2>라이선스</h2>
+        <ul>
+          <li><a href="{{LICENSE_URL}}" rel="noopener">MIT License</a></li>
+          <li><a href="{{THIRD_PARTY_URL}}" rel="noopener">서드파티 고지</a></li>
+        </ul>
+      </div>
+    </nav>
+  </div>
+  <p class="copyright">© {{YEAR}} {{PRODUCT_NAME}} · 오픈소스 (MIT)</p>
+</footer>
+
+</body>
+</html>

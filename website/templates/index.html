@@ -1,0 +1,140 @@
+<!--TITLE:DIAG.BENCH — Windows PC 하드웨어·시스템 진단 도구-->
+<!--DESC:CPU·GPU·메모리·저장장치 상태를 측정하고 근거와 함께 원인 후보를 제시하는 무료 오픈소스 Windows 진단 도구. 확인하지 않은 것은 정상이라고 말하지 않습니다.-->
+
+<section class="hero">
+  <div class="wrap">
+    <p class="eyebrow">오픈소스 · 무료 · Windows x64</p>
+    <h1>PC가 왜 이상한지,<br><span class="accent">근거와 함께</span> 알려줍니다.</h1>
+    <p class="lead">{{DESCRIPTION}}</p>
+
+    <div class="cta">
+      <a class="btn btn-primary" href="{{DOWNLOAD_URL}}">
+        <span class="btn-main">{{DOWNLOAD_LABEL}}</span>
+        <span class="btn-sub">{{DOWNLOAD_SUB}}</span>
+      </a>
+      <a class="btn btn-ghost" href="download.html">다른 다운로드 옵션</a>
+    </div>
+    <p class="version-line">{{VERSION_LINE}}</p>
+  </div>
+</section>
+
+<section class="principle">
+  <div class="wrap">
+    <h2>이 도구가 다른 점</h2>
+    <div class="principle-grid">
+      <article>
+        <h3>검사하지 않은 것을 정상이라고 하지 않습니다</h3>
+        <p>실행하지 않은 검사는 "이상 없음"이 아니라 <strong>"검사 안 함"</strong>으로 표시됩니다.
+           결과를 판단할 수 없으면 정상으로 넘기지 않고 <strong>"판단 보류"</strong>로 남깁니다.</p>
+      </article>
+      <article>
+        <h3>관측한 사실과 추정한 원인을 구분합니다</h3>
+        <p>"온도가 88°C다"는 측정값이고 "쿨러가 고장났다"는 추정입니다.
+           원인은 하나로 단정하지 않고 후보를 나열하며, 각 판정에 실제 측정값을 근거로 붙입니다.</p>
+      </article>
+      <article>
+        <h3>확인 방법을 함께 알려줍니다</h3>
+        <p>문제를 찾으면 조치 방법과 <strong>재검사 방법</strong>까지 제시합니다.
+           조치 전후를 비교해 실제로 개선됐는지 확인할 수 있습니다.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section class="features" id="features">
+  <div class="wrap">
+    <h2>주요 기능</h2>
+    <div class="feature-grid">
+
+      <article class="card">
+        <h3>하드웨어 진단</h3>
+        <p>CPU·GPU·메모리·저장장치·네트워크·디스플레이·드라이버·Windows 이벤트 로그
+           8개 영역을 검사하고, 각 항목마다 판정 근거를 남깁니다.</p>
+      </article>
+
+      <article class="card">
+        <h3>저장장치 SMART 상세 분석</h3>
+        <p>전체 판정(PASSED/FAILED)만 보지 않습니다. 읽기 실패 섹터·재할당 섹터·SSD 수명·
+           사용 시간까지 개별 속성을 읽어, <strong>"PASSED인데 상태가 나빠지고 있는 디스크"</strong>를
+           찾아냅니다.</p>
+      </article>
+
+      <article class="card">
+        <h3>부하 테스트 5종</h3>
+        <p>CPU·저장장치·RAM·GPU·VRAM에 실제로 부하를 걸어 확인합니다.
+           온도가 안전 한계를 넘으면 자동으로 중단하며, <strong>부하가 실제로 걸렸는지까지 검증</strong>합니다.</p>
+      </article>
+
+      <article class="card">
+        <h3>실시간 모니터링</h3>
+        <p>CPU·GPU·메모리의 사용률·온도·클럭을 1초 간격으로 관찰합니다.
+           문제가 발생하는 순간을 기록해 JSON으로 저장할 수 있습니다.</p>
+      </article>
+
+      <article class="card">
+        <h3>상관관계 분석</h3>
+        <p>지금 측정한 상태와 최근 Windows 이벤트 기록을 대조합니다.
+           <strong>둘 다 있을 때만</strong> 서로를 근거로 삼아, 근거 없는 확신을 만들지 않습니다.</p>
+      </article>
+
+      <article class="card">
+        <h3>판매용 점검 리포트</h3>
+        <p>중고 거래 시 구매자에게 넘길 수 있는 상태 점검 문서를 만듭니다.
+           하드웨어 식별값, 검사 범위, 등급, 위변조 감지 해시, SMART 측정값 원본이 포함됩니다.</p>
+      </article>
+
+      <article class="card">
+        <h3>주변기기 개별 테스트</h3>
+        <p>마우스 더블클릭 오작동, 키보드 채터링, 모니터 불량화소·잔상,
+           인터넷 핑·지터·손실을 각각 확인할 수 있습니다.</p>
+      </article>
+
+      <article class="card">
+        <h3>진단 기록과 전후 비교</h3>
+        <p>진단 결과를 기록해두고 다음 진단과 비교합니다.
+           조치 후 온도가 실제로 내려갔는지 숫자로 확인할 수 있습니다.</p>
+      </article>
+
+    </div>
+  </div>
+</section>
+
+<section class="limits">
+  <div class="wrap">
+    <h2>미리 알아두실 것</h2>
+    <p class="limits-intro">과장하지 않기 위해, 이 도구가 <strong>하지 못하는 것</strong>도 함께 적습니다.</p>
+    <ul class="limit-list">
+      <li><strong>GPU 실시간 정보는 NVIDIA만 지원합니다.</strong> AMD·Intel GPU는 모델명과 VRAM 용량까지만 확인됩니다.</li>
+      <li><strong>RAM 검사는 간이 검사입니다.</strong> MemTest86 같은 부팅형 정밀 검사를 대체하지 않으며, 어느 슬롯의 모듈이 불량인지는 알 수 없습니다.</li>
+      <li><strong>일부 환경에서는 CPU 온도 센서를 읽지 못합니다.</strong> 그 경우 온도 기반 안전장치 없이 시간 제한 모드로만 동작하며, 그 사실을 화면에 표시합니다.</li>
+      <li><strong>고장 원인을 확정하지 않습니다.</strong> 가능성이 높은 후보와 확인 순서를 제시하는 도구입니다.</li>
+      <li><strong>점검 리포트는 법적 인증서가 아닙니다.</strong> 정부의 성능인증(EPC) 제도와 무관합니다.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="opensource">
+  <div class="wrap os-inner">
+    <div>
+      <h2>오픈소스입니다</h2>
+      <p>진단 규칙과 판정 임계값을 포함한 전체 소스가 공개되어 있습니다.
+         어떤 근거로 그런 판정이 나왔는지 코드에서 직접 확인할 수 있습니다.
+         MIT 라이선스로 자유롭게 사용·수정·배포할 수 있습니다.</p>
+    </div>
+    <div class="os-actions">
+      <a class="btn btn-ghost" href="{{REPO_URL}}" rel="noopener">GitHub에서 소스 보기</a>
+      <a class="btn btn-ghost" href="{{RELEASES_URL}}" rel="noopener">모든 릴리스</a>
+    </div>
+  </div>
+</section>
+
+<section class="final-cta">
+  <div class="wrap">
+    <h2>지금 사용해 보세요</h2>
+    <p>설치 후 바로 전체 진단을 실행할 수 있습니다.</p>
+    <a class="btn btn-primary" href="{{DOWNLOAD_URL}}">
+      <span class="btn-main">{{DOWNLOAD_LABEL}}</span>
+      <span class="btn-sub">{{DOWNLOAD_SUB}}</span>
+    </a>
+  </div>
+</section>

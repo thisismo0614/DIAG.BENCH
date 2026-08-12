@@ -1,0 +1,15 @@
+node_modules/
+*.log
+
+# 빌드 산출물
+dist/
+website/dist/
+
+# 로컬 환경 설정 (예시 파일 .env.example만 커밋한다)
+.env
+.env.local
+
+# 검증용 임시 스크립트는 항상 최상위에 만든다(HANDOFF 2장).
+# ⚠ 슬래시로 시작해야 최상위에만 적용된다. "test-*.js"로 쓰면
+#    scripts/test-rules.js 까지 무시돼서 CI의 테스트 단계가 깨진다.
+/test-*.js

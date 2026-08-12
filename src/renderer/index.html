@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>DIAG.BENCH</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="shell">
+  <div class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">⌗</div>
+      <div>
+        <div class="brand-text">DIAG.BENCH</div>
+        <div class="brand-sub">DIAGNOSIS + BENCHMARK</div>
+      </div>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-group-label">종합</div>
+      <button class="nav-item active" data-target="view-dashboard">대시보드</button>
+      <button class="nav-item" data-target="view-history">진단 기록</button>
+      <button class="nav-item" data-target="view-inspection">판매용 점검 리포트</button>
+    </div>
+    <div class="nav-group">
+      <div class="nav-group-label">실시간</div>
+      <button class="nav-item" data-target="view-live">실시간 모니터링</button>
+    </div>
+    <div class="nav-group">
+      <div class="nav-group-label">안정성 테스트</div>
+      <button class="nav-item" data-target="view-stability">CPU · RAM · 저장장치 부하</button>
+    </div>
+    <div class="nav-group">
+      <div class="nav-group-label">디스플레이</div>
+      <button class="nav-item" data-target="view-display">불량화소 · 잔상 · 균일도</button>
+    </div>
+    <div class="nav-group">
+      <div class="nav-group-label">입력장치</div>
+      <button class="nav-item" data-target="view-mouse">마우스 테스트</button>
+      <button class="nav-item" data-target="view-keyboard">키보드 테스트</button>
+    </div>
+    <div class="nav-group">
+      <div class="nav-group-label">네트워크</div>
+      <button class="nav-item" data-target="view-network">속도 · 핑 테스트</button>
+    </div>
+  </div>
+
+  <div class="main">
+
+    <!-- ================= 대시보드 ================= -->
+    <section class="view active" id="view-dashboard">
+      <section id="idle-view" class="center-view">
+        <div class="eyebrow">SYSTEM HEALTH</div>
+        <h1 class="title">지금 어떤 문제가 있으신가요?</h1>
+        <p class="desc">증상을 고르면 관련된 항목을 우선 확인합니다. 잘 모르겠으면 전체 진단을 실행하세요.</p>
+        <div class="symptom-grid">
+          <button class="symptom-btn" data-symptom="gaming">
+            <span class="symptom-title">게임/작업 중 버벅거림</span>
+            <span class="symptom-sub">CPU · GPU · RAM 우선 확인</span>
+          </button>
+          <button class="symptom-btn" data-symptom="slow">
+            <span class="symptom-title">PC가 전반적으로 느려짐</span>
+            <span class="symptom-sub">CPU · RAM · 저장장치 우선 확인</span>
+          </button>
+          <button class="symptom-btn" data-symptom="network">
+            <span class="symptom-title">인터넷이 불안정함</span>
+            <span class="symptom-sub">네트워크 우선 확인</span>
+          </button>
+          <button class="symptom-btn" data-symptom="display">
+            <span class="symptom-title">화면이 이상함</span>
+            <span class="symptom-sub">디스플레이 우선 확인</span>
+          </button>
+          <button class="symptom-btn" data-symptom="crash">
+            <span class="symptom-title">프로그램이 자주 튕기거나 재부팅됨</span>
+            <span class="symptom-sub">드라이버 · CPU · GPU 우선 확인</span>
+          </button>
+          <button class="symptom-btn" data-symptom="full">
+            <span class="symptom-title">전체 진단</span>
+            <span class="symptom-sub">모든 항목 동일하게 확인</span>
+          </button>
+        </div>
+      </section>
+
+      <section id="progress-view" class="center-view" style="display:none;">
+        <div class="scan-ring"></div>
+        <div class="progress-stage" id="progress-stage">준비 중...</div>
+      </section>
+
+      <section id="result-view" style="display:none;">
+        <div class="headline-card">
+          <div>
+            <div class="headline-eyebrow" id="headline-eyebrow">진단 결과</div>
+            <div class="headline-text" id="headline-text">–</div>
+          </div>
+          <div class="btn-row">
+            <button class="btn" id="save-report-btn">리포트 저장</button>
+            <button class="btn" id="rerun-btn">다시 진단</button>
+            <button class="btn" id="back-to-symptom-btn">증상 다시 선택</button>
+          </div>
+        </div>
+        <div class="health-grid" id="health-grid"></div>
+        <div id="detail-list"></div>
+      </section>
+    </section>
+
+    <!-- ================= 진단 기록 ================= -->
+    <section class="view" id="view-history">
+      <div class="eyebrow">HISTORY</div>
+      <h1 class="title">진단 기록</h1>
+      <p class="desc">지금까지 실행한 전체 진단 결과를 시간순으로 보여줍니다. 온도·핑 같은 수치가 시간이 지나며 나빠지는지 확인할 수 있습니다.</p>
+      <div class="btn-row" style="margin-bottom:16px;">
+        <button class="btn" id="history-refresh-btn">새로고침</button>
+        <button class="btn" id="history-clear-btn">기록 전체 삭제</button>
+      </div>
+      <div id="history-list"></div>
+    </section>
+
+    <!-- ================= 판매용 점검 리포트 ================= -->
+    <section class="view" id="view-inspection">
+      <div class="eyebrow">INSPECTION REPORT</div>
+      <h1 class="title">PC 상태 점검 리포트</h1>
+      <p class="desc">중고 거래나 판매 시 구매자에게 전달할 수 있는 문서입니다. 하드웨어 시리얼을 함께 기록해서 구매자가 실제 받은 PC와 대조할 수 있게 하고, 발급 후 7일의 유효기간을 표시합니다. <b>법적 인증서가 아니라 소프트웨어 진단 결과 문서</b>라는 점을 리포트 안에 명시합니다.</p>
+
+      <div id="inspection-idle" class="device-panel">
+        <div class="device-panel-title" style="margin-bottom:10px;">새 점검 리포트 발급</div>
+        <p class="mini-desc">CPU/GPU/메모리/저장장치/네트워크/디스플레이/드라이버/이벤트 로그를 검사하고, 시스템·메인보드·저장장치 시리얼을 함께 기록합니다.</p>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-soft);margin:12px 0;">
+          <input type="checkbox" id="inspection-deep-toggle">
+          정밀 검사 포함 (CPU 부하·저장장치 처리량·RAM 검사 추가, 약 20초 더 소요)
+        </label>
+        <div class="btn-row"><button class="btn btn-accent" id="inspection-start">점검 시작</button></div>
+      </div>
+
+      <div id="inspection-progress" class="center-view" style="display:none;padding:60px 20px;">
+        <div class="scan-ring"></div>
+        <div class="progress-stage" id="inspection-progress-stage">준비 중...</div>
+      </div>
+
+      <div id="inspection-result" style="display:none;">
+        <!-- 실제로 저장되는 PDF와 화면에 보이는 결과가 완전히 같은 문서가 되도록,
+             buildInspectionReportHtml()이 만든 HTML을 그대로 iframe에 넣어서 보여준다. -->
+        <div class="device-panel" style="padding:0; overflow:hidden;">
+          <iframe id="inspection-report-frame" style="width:100%; border:0; display:block;"></iframe>
+        </div>
+
+        <div class="device-panel" id="inspection-smart-retry-panel" style="display:none;">
+          <div class="device-panel-title" style="margin-bottom:10px;">SMART 재검사</div>
+          <div id="inspection-smart-retry"></div>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn btn-accent" id="inspection-save-pdf">PDF로 저장 (QR 포함)</button>
+          <button class="btn" id="inspection-save-html">HTML로 저장 (QR 포함)</button>
+          <button class="btn" id="inspection-rerun">새로 발급</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= 안정성 테스트 ================= -->
+    <section class="view" id="view-stability">
+      <div class="eyebrow">STABILITY TESTS</div>
+      <h1 class="title">CPU · RAM · 저장장치 부하 테스트</h1>
+      <p class="desc">실제로 시스템에 부하를 걸어 안정성을 확인합니다. 온도가 안전 한계를 넘으면 자동으로 중단됩니다.</p>
+
+      <div class="device-panel">
+        <div class="device-panel-head">
+          <div class="device-panel-title">CPU 부하 테스트</div>
+          <span class="badge badge-good" id="cpu-stress-badge">대기 중</span>
+        </div>
+        <div class="screen">
+          <div class="screen-row"><span>예상 소요 시간</span><span class="val">15초</span></div>
+          <div class="screen-row"><span>안전 한계 온도</span><span class="val">95°C (초과 시 자동 중단)</span></div>
+          <div class="screen-row"><span>사용 코어</span><span class="val" id="cpu-stress-cores">–</span></div>
+          <div class="screen-row"><span>경과 시간</span><span class="val" id="cpu-stress-elapsed">–</span></div>
+          <div class="screen-row"><span>현재 온도 / 최고 온도</span><span class="val" id="cpu-stress-temp">–</span></div>
+          <div class="screen-row"><span>현재 클럭</span><span class="val" id="cpu-stress-clock">–</span></div>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-accent" id="cpu-stress-start">테스트 시작</button>
+          <button class="btn" id="cpu-stress-abort" disabled>중단</button>
+        </div>
+        <div class="result-note" id="cpu-stress-result"></div>
+      </div>
+
+      <div class="device-panel">
+        <div class="device-panel-head">
+          <div class="device-panel-title">저장장치 처리량 테스트</div>
+          <span class="badge badge-good" id="storage-test-badge">대기 중</span>
+        </div>
+        <p class="mini-desc">임시 폴더에 200MB 파일을 실제로 쓰고 읽어 순차 처리량(MB/s)을 측정합니다. 테스트 후 파일은 자동 삭제됩니다.</p>
+        <div class="btn-row">
+          <button class="btn btn-accent" id="storage-test-start">테스트 시작</button>
+        </div>
+        <div class="result-note" id="storage-test-result"></div>
+      </div>
+
+      <div class="device-panel">
+        <div class="device-panel-head">
+          <div class="device-panel-title">RAM 무결성 간이검사</div>
+          <span class="badge badge-good" id="ram-test-badge">대기 중</span>
+        </div>
+        <p class="mini-desc">256MB 버퍼에 패턴을 쓰고 다시 읽어 값이 일치하는지 확인하는 간이 자가점검입니다. MemTest86 같은 부팅형 정밀 검사와는 다르며 참고용입니다.</p>
+        <div class="btn-row">
+          <button class="btn btn-accent" id="ram-test-start">테스트 시작</button>
+        </div>
+        <div class="result-note" id="ram-test-result"></div>
+      </div>
+
+      <div class="device-panel">
+        <div class="device-panel-head">
+          <div class="device-panel-title">GPU 부하 테스트</div>
+          <span class="badge badge-good" id="gpu-stress-badge">대기 중</span>
+        </div>
+        <p class="mini-desc">WebGL 렌더링으로 실제 GPU 부하를 10%→100%까지 단계적으로 올리며 온도·클럭 변화를 관찰합니다(CUDA 없이 Electron의 Chromium GPU 가속만으로 실측 부하 발생 확인됨 — 최대 강도에서 GPU 사용률 99% 지속). <b>테스트 중에는 창을 최소화하지 마세요</b> — 화면 갱신이 멈춰 부하가 걸리지 않으며, 그 경우 결과를 "이상 없음"이 아니라 "판단 보류"로 처리합니다. NVIDIA GPU + nvidia-smi가 있어야 동작합니다.</p>
+        <canvas id="gpu-stress-canvas" width="960" height="540" style="width:100%;max-width:420px;border-radius:10px;display:block;margin:10px 0;background:#000;"></canvas>
+        <div class="screen">
+          <div class="screen-row"><span>예상 소요 시간</span><span class="val">18초 (6단계 × 3초)</span></div>
+          <div class="screen-row"><span>안전 한계 온도</span><span class="val">90°C (초과 시 자동 중단)</span></div>
+          <div class="screen-row"><span>부하 강도</span><span class="val" id="gpu-stress-stage">–</span></div>
+          <div class="screen-row"><span>경과 시간</span><span class="val" id="gpu-stress-elapsed">–</span></div>
+          <div class="screen-row"><span>사용률 / 온도</span><span class="val" id="gpu-stress-load-temp">–</span></div>
+          <div class="screen-row"><span>클럭 / VRAM</span><span class="val" id="gpu-stress-clock-vram">–</span></div>
+          <div class="screen-row"><span>마지막 기록(진단 반영)</span><span class="val" id="gpu-stress-last">–</span></div>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-accent" id="gpu-stress-start">테스트 시작</button>
+          <button class="btn" id="gpu-stress-abort" disabled>중단</button>
+        </div>
+        <div class="result-note" id="gpu-stress-result"></div>
+      </div>
+
+      <div class="device-panel">
+        <div class="device-panel-head">
+          <div class="device-panel-title">VRAM 압박 · 무결성 테스트</div>
+          <span class="badge badge-good" id="vram-test-badge">대기 중</span>
+        </div>
+        <p class="mini-desc">여유 VRAM의 60%까지 텍스처를 실제로 올려 채운 뒤, 올린 값이 그대로 다시 읽히는지 바이트 단위로 비교합니다(원본 1회 + 비트 반전 1회, 총 2패스). 다른 프로그램이 이미 쓰고 있는 영역은 검사할 수 없으며, MemTest86 같은 전용 도구를 대체하지 않는 간이검사입니다.</p>
+        <div class="screen">
+          <div class="screen-row"><span>목표 할당량</span><span class="val" id="vram-test-target">–</span></div>
+          <div class="screen-row"><span>진행</span><span class="val" id="vram-test-stage">–</span></div>
+          <div class="screen-row"><span>할당 성공 / 검사 완료</span><span class="val" id="vram-test-alloc">–</span></div>
+          <div class="screen-row"><span>VRAM 사용량(nvidia-smi)</span><span class="val" id="vram-test-smi">–</span></div>
+          <div class="screen-row"><span>불일치</span><span class="val" id="vram-test-mismatch">–</span></div>
+          <div class="screen-row"><span>마지막 기록(진단 반영)</span><span class="val" id="vram-test-last">–</span></div>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-accent" id="vram-test-start">테스트 시작</button>
+          <button class="btn" id="vram-test-abort" disabled>중단</button>
+        </div>
+        <div class="result-note" id="vram-test-result"></div>
+      </div>
+    </section>
+
+    <!-- ================= 디스플레이 ================= -->
+    <section class="view" id="view-display">
+      <div class="eyebrow">DISPLAY TESTS</div>
+      <h1 class="title">불량화소 · 잔상 · 밝기 균일도</h1>
+      <p class="desc">이 테스트들은 시각적으로 눈에 보이는 이상을 확인하는 용도이며, 패널의 물리적 응답속도(GtG)를 직접 측정하지는 않습니다.</p>
+
+      <div class="device-panel">
+        <div class="device-panel-title" style="margin-bottom:12px;">불량화소 테스트 (DISP-04)</div>
+        <div class="swatch-row">
+          <div class="swatch" style="background:#000" data-color="#000000"></div>
+          <div class="swatch" style="background:#fff;border-color:#ccc" data-color="#ffffff"></div>
+          <div class="swatch" style="background:#ff0000" data-color="#ff0000"></div>
+          <div class="swatch" style="background:#00ff00" data-color="#00ff00"></div>
+          <div class="swatch" style="background:#0000ff" data-color="#0000ff"></div>
+          <div class="swatch" style="background:#808080" data-color="#808080"></div>
+        </div>
+        <div class="fullbox" id="deadpixel-box" style="background:#000;">색상 클릭 → 전체화면 (ESC로 종료)</div>
+        <div class="check-record" data-test-id="DISP-04">
+          <div class="check-record-status">아직 기록 없음</div>
+          <textarea class="check-note" placeholder="(선택) 이상 발견 시 위치/증상 메모" rows="2"></textarea>
+          <div class="btn-row">
+            <button class="btn check-pass-btn">이상 없음으로 기록</button>
+            <button class="btn check-issue-btn">이상 발견으로 기록</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="device-panel">
+        <div class="device-panel-title" style="margin-bottom:12px;">잔상 · 응답 테스트 (DISP-02)</div>
+        <canvas id="ghost-canvas" height="140"></canvas>
+        <div class="slider-row">
+          <span class="slabel" id="ghost-speed-label">보통</span>
+          <input type="range" id="ghost-speed" min="1" max="5" value="2">
+        </div>
+        <div class="check-record" data-test-id="DISP-02">
+          <div class="check-record-status">아직 기록 없음</div>
+          <textarea class="check-note" placeholder="(선택) 이상 발견 시 증상 메모" rows="2"></textarea>
+          <div class="btn-row">
+            <button class="btn check-pass-btn">이상 없음으로 기록</button>
+            <button class="btn check-issue-btn">이상 발견으로 기록</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="device-panel">
+        <div class="device-panel-title" style="margin-bottom:12px;">그라데이션 밴딩 테스트</div>
+        <div class="gradient-bar" style="background:linear-gradient(90deg,#000,#fff);"></div>
+        <div class="gradient-bar" style="background:linear-gradient(90deg,red,orange,yellow,green,blue,indigo,violet);"></div>
+      </div>
+
+      <div class="device-panel">
+        <div class="device-panel-title" style="margin-bottom:12px;">밝기 균일도 (DISP-08)</div>
+        <div class="fullbox" id="uniform-box" style="background:#808080;color:rgba(0,0,0,.3);">클릭 시 전체화면</div>
+        <div class="slider-row">
+          <span class="slabel" id="uniform-label">50%</span>
+          <input type="range" id="uniform-slider" min="10" max="90" value="50">
+        </div>
+        <div class="check-record" data-test-id="DISP-08">
+          <div class="check-record-status">아직 기록 없음</div>
+          <textarea class="check-note" placeholder="(선택) 이상 발견 시 위치/증상 메모" rows="2"></textarea>
+          <div class="btn-row">
+            <button class="btn check-pass-btn">이상 없음으로 기록</button>
+            <button class="btn check-issue-btn">이상 발견으로 기록</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= 마우스 ================= -->
+    <section class="view" id="view-mouse">
+      <div class="eyebrow">MOUSE-01/02/03</div>
+      <h1 class="title">마우스 테스트</h1>
+
+      <div class="device-panel">
+        <div class="device-panel-head">
+          <div class="device-panel-title">더블클릭 오작동 테스트</div>
+          <span class="badge badge-good" id="dbl-badge">대기 중</span>
+        </div>
+        <canvas id="dbl-canvas" height="120"></canvas>
+        <div class="pad" id="dbl-pad">클릭해서 시작 (좌/우/휠 클릭 모두 인식)</div>
+        <div class="slider-row">
+          <span class="slabel" id="dbl-threshold-label">50 ms</span>
+          <input type="range" id="dbl-threshold" min="20" max="150" value="50">
+        </div>
+        <div class="screen">
+          <div class="screen-row"><span>총 클릭 수</span><span class="val" id="dbl-total">0</span></div>
+          <div class="screen-row"><span>고스트 클릭 감지</span><span class="val" id="dbl-ghost">0</span></div>
+        </div>
+        <div class="btn-row"><button class="btn" id="dbl-reset">초기화</button></div>
+      </div>
+
+      <div class="device-panel">
+        <div class="device-panel-title" style="margin-bottom:12px;">버튼 인식 테스트</div>
+        <div class="grid3">
+          <div class="click-btn" id="btn-left" data-btn="0"><span>좌클릭</span><span class="count" id="cnt-left">0</span></div>
+          <div class="click-btn" id="btn-mid" data-btn="1"><span>휠클릭</span><span class="count" id="cnt-mid">0</span></div>
+          <div class="click-btn" id="btn-right" data-btn="2"><span>우클릭</span><span class="count" id="cnt-right">0</span></div>
+        </div>
+      </div>
+
+      <div class="device-panel">
+        <div class="device-panel-title" style="margin-bottom:12px;">스크롤 휠 테스트</div>
+        <div class="pad" id="scroll-pad" style="cursor:default;">패드 위에서 휠을 굴려보세요</div>
+        <div class="screen" style="margin-top:12px;">
+          <div class="screen-row"><span>총 이벤트</span><span class="val" id="scroll-count">0</span></div>
+          <div class="screen-row"><span>연속 이중 이벤트</span><span class="val" id="scroll-double">0</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= 키보드 ================= -->
+    <section class="view" id="view-keyboard">
+      <div class="eyebrow">KEYB-01</div>
+      <h1 class="title">키 입력 · 채터링 테스트</h1>
+      <div class="device-panel">
+        <div class="screen">
+          <div class="screen-row"><span>마지막 입력 키</span><span class="val" id="kb-last">–</span></div>
+          <div class="screen-row"><span>테스트된 키 수</span><span class="val" id="kb-tested">0</span></div>
+          <div class="screen-row"><span>채터링 의심 횟수</span><span class="val" id="kb-chatter">0</span></div>
+        </div>
+        <div class="kb" id="keyboard-vis"></div>
+        <div class="log" id="kb-log"></div>
+        <div class="btn-row"><button class="btn" id="kb-reset">초기화</button></div>
+      </div>
+    </section>
+
+    <!-- ================= 네트워크 ================= -->
+    <section class="view" id="view-network">
+      <div class="eyebrow">NET-01</div>
+      <h1 class="title">인터넷 속도 테스트</h1>
+      <div class="device-panel">
+        <div class="device-panel-head">
+          <div class="device-panel-title">실시간 측정</div>
+          <span class="badge badge-good" id="net-badge">테스트 대기</span>
+        </div>
+        <div class="metric-grid">
+          <div class="metric-card">
+            <div class="metric-label">PING</div>
+            <div class="metric-value" id="net-ping">–<span class="unit">ms</span></div>
+            <div class="metric-sub" id="net-jitter">지터 –</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-label">DOWNLOAD</div>
+            <div class="metric-value" id="net-down">–<span class="unit">Mbps</span></div>
+            <div class="metric-sub" id="net-down-sub">대기 중</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-label">UPLOAD</div>
+            <div class="metric-value" id="net-up">–<span class="unit">Mbps</span></div>
+            <div class="metric-sub" id="net-up-sub">대기 중</div>
+          </div>
+        </div>
+        <div class="btn-row"><button class="btn btn-accent" id="net-start">테스트 시작</button></div>
+      </div>
+    </section>
+
+    <!-- ================= 실시간 모니터링 ================= -->
+    <section class="view" id="view-live">
+      <div class="eyebrow">LIVE MONITORING</div>
+      <h1 class="title">실시간 모니터링</h1>
+      <p class="desc">이 화면을 열어둔 동안 1초 간격으로 센서 값을 갱신합니다. 문제가 발생하는 순간(게임 끊김, 팬 소음 급증 등)에 "기록 시작"을 눌러두면 그 시점의 값을 타임스탬프와 함께 남길 수 있습니다.</p>
+
+      <div class="device-panel">
+        <div class="device-panel-title" style="margin-bottom:12px;">CPU</div>
+        <div class="metric-grid">
+          <div class="metric-card"><div class="metric-label">USAGE</div><div class="metric-value" id="live-cpu-usage">–<span class="unit">%</span></div></div>
+          <div class="metric-card"><div class="metric-label">TEMP</div><div class="metric-value" id="live-cpu-temp">–<span class="unit">°C</span></div></div>
+          <div class="metric-card"><div class="metric-label">CLOCK</div><div class="metric-value" id="live-cpu-clock">–<span class="unit">GHz</span></div></div>
+        </div>
+        <canvas id="live-cpu-chart" height="110" style="margin-top:12px;"></canvas>
+      </div>
+
+      <div class="device-panel">
+        <div class="device-panel-title" style="margin-bottom:12px;">GPU</div>
+        <div id="live-gpu-unsupported" class="note-card" style="display:none;">NVIDIA GPU가 아니거나 nvidia-smi를 찾을 수 없어 실시간 GPU 값을 읽을 수 없습니다.</div>
+        <div id="live-gpu-body">
+          <div class="metric-grid">
+            <div class="metric-card"><div class="metric-label">USAGE</div><div class="metric-value" id="live-gpu-usage">–<span class="unit">%</span></div></div>
+            <div class="metric-card"><div class="metric-label">TEMP</div><div class="metric-value" id="live-gpu-temp">–<span class="unit">°C</span></div></div>
+            <div class="metric-card"><div class="metric-label">CLOCK</div><div class="metric-value" id="live-gpu-clock">–<span class="unit">MHz</span></div></div>
+          </div>
+          <canvas id="live-gpu-chart" height="110" style="margin-top:12px;"></canvas>
+        </div>
+      </div>
+
+      <div class="device-panel">
+        <div class="device-panel-title" style="margin-bottom:12px;">RAM</div>
+        <div class="metric-grid">
+          <div class="metric-card"><div class="metric-label">USAGE</div><div class="metric-value" id="live-ram-usage">–<span class="unit">%</span></div></div>
+        </div>
+        <canvas id="live-ram-chart" height="80" style="margin-top:12px;"></canvas>
+      </div>
+
+      <div class="device-panel">
+        <div class="device-panel-head">
+          <div class="device-panel-title">센서 기록 (Sensor Recording)</div>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-accent" id="live-record-start">기록 시작</button>
+          <button class="btn" id="live-record-stop" disabled>기록 중지</button>
+          <button class="btn" id="live-record-save" disabled>기록 저장 (JSON)</button>
+        </div>
+        <div class="log" id="live-record-log" style="max-height:220px;"></div>
+      </div>
+    </section>
+
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,259 @@
+# 태그를 push하면 빌드 → (SignPath) 코드 서명 → 서명 검증 → GitHub Release 까지 자동 진행.
+#
+# 설계 원칙 두 가지:
+#  1. **서명됐다고 거짓말하지 않는다.** 서명을 시도했는데 실패하면 릴리스를 만들지 않고 워크플로를
+#     실패시킨다. 반대로 SignPath가 아직 설정되지 않았으면(승인 대기 등) "미서명"이라고 릴리스
+#     본문에 분명히 적고 배포한다 — 서명 실패와 미구성은 다른 상태다.
+#  2. **태그와 package.json 버전이 어긋나면 시작조차 하지 않는다.** 어긋난 채로 배포하면
+#     "v0.18.0 릴리스인데 앱은 0.17.0"이라는 추적 불가능한 상태가 된다.
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write        # 릴리스 생성에 필요
+  actions: write         # 마지막 단계에서 website.yml을 트리거하는 데 필요
+                         # (이게 없으면 gh workflow run이 403으로 실패해 사이트가 갱신되지 않는다)
+
+env:
+  NODE_VERSION: '22'
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      # ---------- 1. 버전 일치 확인 ----------
+      - name: 태그와 package.json 버전 대조
+        id: version
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"           # 예: v0.17.0
+          $tagVersion = $tag.TrimStart('v')
+          $pkgVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          Write-Host "태그: $tag (버전 $tagVersion) / package.json: $pkgVersion"
+          if ($tagVersion -ne $pkgVersion) {
+            throw "태그($tagVersion)와 package.json($pkgVersion) 버전이 다릅니다. package.json을 먼저 올리고 커밋한 뒤 태그를 만드세요."
+          }
+          "version=$pkgVersion" >> $env:GITHUB_OUTPUT
+          "exe_name=DIAG.BENCH-Setup-$pkgVersion-win-x64.exe" >> $env:GITHUB_OUTPUT
+
+      - name: 의존성 설치
+        run: npm ci
+
+      # ---------- 2. 테스트 (실패하면 배포하지 않는다) ----------
+      - name: 회귀 테스트
+        run: npm run test-rules
+
+      # ---------- 3. 빌드 ----------
+      - name: 설치 파일 빌드
+        run: npm run build:win
+
+      - name: 산출물 검증
+        shell: pwsh
+        run: |
+          $path = "dist\${{ steps.version.outputs.exe_name }}"
+          if (-not (Test-Path $path)) {
+            Write-Host "dist 폴더 내용:"; Get-ChildItem dist | Format-Table Name, Length
+            throw "예상한 설치 파일이 없습니다: $path"
+          }
+          $exe = Get-Item $path
+          Write-Host "크기: $([math]::Round($exe.Length/1MB,1)) MB"
+          if ($exe.Length -lt 40MB) { throw "설치 파일이 비정상적으로 작습니다 — 리소스 누락 의심" }
+          if (-not (Test-Path "dist\win-unpacked\resources\smartmontools\smartctl.exe")) {
+            throw "smartctl.exe가 패키징되지 않았습니다 — SMART 진단이 동작하지 않습니다."
+          }
+          # 서명 전 상태를 기록해둔다(서명 후와 비교하기 위해)
+          $sig = Get-AuthenticodeSignature $path
+          Write-Host "서명 전 상태: $($sig.Status)"
+
+      # ---------- 4. 서명 대상 아티팩트 업로드 ----------
+      # SignPath는 GitHub Actions 아티팩트를 가져가서 서명한다. artifact-id가 필요하다.
+      - name: 미서명 아티팩트 업로드
+        id: upload-unsigned
+        uses: actions/upload-artifact@v4
+        with:
+          name: diag-bench-unsigned
+          path: dist/${{ steps.version.outputs.exe_name }}
+          if-no-files-found: error
+          retention-days: 7
+
+      # ---------- 5. SignPath 코드 서명 ----------
+      # 저장소 변수(Settings > Secrets and variables > Actions > Variables)에 값이 있을 때만 실행된다.
+      # 조직 ID와 프로젝트 slug는 비밀이 아니라 변수로, API 토큰만 시크릿으로 둔다.
+      - name: SignPath 서명 요청
+        id: sign
+        if: vars.SIGNPATH_ORGANIZATION_ID != '' && vars.SIGNPATH_PROJECT_SLUG != ''
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
+          organization-id: '${{ vars.SIGNPATH_ORGANIZATION_ID }}'
+          project-slug: '${{ vars.SIGNPATH_PROJECT_SLUG }}'
+          signing-policy-slug: '${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || ''release-signing'' }}'
+          github-artifact-id: '${{ steps.upload-unsigned.outputs.artifact-id }}'
+          wait-for-completion: true
+          output-artifact-directory: 'signed'
+
+      # ---------- 6. 서명 검증 ----------
+      # 여기가 핵심이다. "서명을 요청했는데 결과물이 서명되어 있지 않다"면 반드시 실패시킨다.
+      - name: 서명 검증
+        id: verify
+        shell: pwsh
+        run: |
+          $exeName = "${{ steps.version.outputs.exe_name }}"
+          $orgId   = "${{ vars.SIGNPATH_ORGANIZATION_ID }}"
+          $slug    = "${{ vars.SIGNPATH_PROJECT_SLUG }}"
+          $signStepResult = "${{ steps.sign.outcome }}"
+
+          # 세 가지 상태를 구분한다:
+          #  (a) 둘 다 비어 있음  → 아직 SignPath를 설정하지 않은 것. 미서명으로 배포한다.
+          #  (b) 하나만 설정됨    → 설정 실수. 조용히 미서명 배포하면 위험하므로 즉시 실패시킨다.
+          #  (c) 둘 다 설정됨     → 서명 결과를 반드시 검증한다.
+          if ($orgId -eq '' -and $slug -eq '') {
+            Write-Host "::warning::SignPath가 아직 설정되지 않아 서명 없이 배포합니다. 릴리스에 '미서명'으로 표시됩니다."
+            Copy-Item "dist\$exeName" "release-$exeName"
+            "signed=false" >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+          if ($orgId -eq '' -or $slug -eq '') {
+            throw "SignPath 설정이 불완전합니다(SIGNPATH_ORGANIZATION_ID='$orgId', SIGNPATH_PROJECT_SLUG='$slug'). 두 저장소 변수를 모두 설정하거나 모두 비워두세요."
+          }
+
+          if ($signStepResult -ne 'success') {
+            throw "SignPath 서명 단계가 정상 완료되지 않았습니다(결과: $signStepResult). 릴리스를 생성하지 않습니다."
+          }
+
+          $signedPath = "signed\$exeName"
+          if (-not (Test-Path $signedPath)) {
+            Write-Host "signed 폴더 내용:"; Get-ChildItem signed -Recurse -ErrorAction SilentlyContinue | Format-Table Name
+            throw "서명된 파일을 받지 못했습니다: $signedPath"
+          }
+
+          $sig = Get-AuthenticodeSignature $signedPath
+          Write-Host "Status         : $($sig.Status)"
+          Write-Host "StatusMessage  : $($sig.StatusMessage)"
+          Write-Host "Signer         : $($sig.SignerCertificate.Subject)"
+          Write-Host "Issuer         : $($sig.SignerCertificate.Issuer)"
+          Write-Host "만료           : $($sig.SignerCertificate.NotAfter)"
+
+          # Valid = 신뢰 체인까지 검증됨. UnknownError 등은 서명이 있어도 문제가 있는 상태다.
+          if ($sig.Status -ne 'Valid') {
+            throw "서명 검증에 실패했습니다: $($sig.Status) — $($sig.StatusMessage)"
+          }
+          if (-not $sig.SignerCertificate) {
+            throw "서명자 인증서를 확인할 수 없습니다."
+          }
+
+          Copy-Item $signedPath "release-$exeName"
+          "signed=true" >> $env:GITHUB_OUTPUT
+          "signer=$($sig.SignerCertificate.Subject)" >> $env:GITHUB_OUTPUT
+
+      # ---------- 6-1. GPL 소스 동봉 ----------
+      # 설치 파일에 GPL v2인 smartctl.exe를 동봉하므로, GPL v2 §3의 "소스 제공" 요건을
+      # 충족하기 위해 대응 소스 tarball을 같은 릴리스에 함께 올린다.
+      # (문서에 링크만 걸어두는 것보다 확실하다 — 링크는 나중에 깨질 수 있다)
+      #
+      # SourceForge 직링크는 미러 선택 페이지(HTML)를 돌려주는 경우가 있어 실측으로 확인한
+      # 조합(use_mirror=autoselect + curl User-Agent)을 쓰고, 받은 파일이 진짜 gzip인지와
+      # 체크섬이 맞는지 검증한다. 하나라도 어긋나면 릴리스를 만들지 않는다.
+      - name: smartmontools 소스 tarball 첨부
+        shell: pwsh
+        run: |
+          $ver = '7.5'   # resources/smartmontools/smartctl.exe --version 과 반드시 일치해야 함
+          $expected = '690b83ca331378da9ea0d9d61008c4b22dde391387b9bbad7f29387f2595f76e'
+          $out = "smartmontools-$ver.tar.gz"
+          $url = "https://downloads.sourceforge.net/project/smartmontools/smartmontools/$ver/smartmontools-$ver.tar.gz?use_mirror=autoselect"
+
+          Invoke-WebRequest -Uri $url -OutFile $out -UserAgent 'curl/8.0' -TimeoutSec 300
+
+          # 미러 선택 HTML을 받은 경우를 걸러낸다(gzip 매직 바이트 1F 8B 확인)
+          $magic = [System.IO.File]::ReadAllBytes($out)[0..1]
+          if ($magic[0] -ne 0x1F -or $magic[1] -ne 0x8B) {
+            throw "받은 파일이 gzip이 아닙니다(매직 {0:X2} {1:X2}). SourceForge 미러 페이지를 받았을 수 있습니다." -f $magic[0], $magic[1]
+          }
+          $actual = (Get-FileHash $out -Algorithm SHA256).Hash.ToLower()
+          if ($actual -ne $expected) {
+            throw "smartmontools 소스 체크섬 불일치.`n예상: $expected`n실제: $actual"
+          }
+          Write-Host "smartmontools $ver 소스 확인 완료 ($([math]::Round((Get-Item $out).Length/1MB,2)) MB)"
+          "src_name=$out" >> $env:GITHUB_OUTPUT
+        id: gplsrc
+
+      # ---------- 7. 체크섬 ----------
+      - name: SHA-256 체크섬 생성
+        shell: pwsh
+        run: |
+          $exeName = "${{ steps.version.outputs.exe_name }}"
+          # 최종 업로드 이름으로 먼저 정리한 뒤 해시를 계산한다
+          Move-Item "release-$exeName" $exeName -Force
+          $lines = @()
+          foreach ($f in @($exeName, "${{ steps.gplsrc.outputs.src_name }}")) {
+            $h = (Get-FileHash $f -Algorithm SHA256).Hash.ToLower()
+            $lines += "$h  $f"      # sha256sum 호환 형식
+          }
+          $lines -join "`n" | Out-File -FilePath "SHA256SUMS.txt" -Encoding ascii
+          Write-Host (Get-Content SHA256SUMS.txt -Raw)
+
+      # ---------- 8. 릴리스 노트 ----------
+      # 본문 생성은 .github/scripts/release-notes.ps1 로 분리했다.
+      # (PowerShell here-string의 "0열 종료" 규칙과 YAML 블록 스칼라의 들여쓰기 규칙이
+      #  충돌해서, 인라인으로 두면 워크플로 YAML 자체가 파싱되지 않는다)
+      # 인증서 주체(Signer)는 우리가 만든 문자열이 아니라 인증서에서 읽어온 값이라
+      # 따옴표 같은 문자가 들어 있을 수 있다. 스크립트 본문에 직접 끼워넣지 않고 env로 전달한다.
+      - name: 릴리스 노트 작성
+        shell: pwsh
+        env:
+          RN_VERSION: ${{ steps.version.outputs.version }}
+          RN_EXE_NAME: ${{ steps.version.outputs.exe_name }}
+          RN_SIGNED: ${{ steps.verify.outputs.signed }}
+          RN_SIGNER: ${{ steps.verify.outputs.signer }}
+        run: |
+          # SHA256SUMS.txt는 여러 줄이다(설치 파일 + GPL 소스). 첫 줄이 설치 파일이다.
+          $firstLine = (Get-Content SHA256SUMS.txt | Select-Object -First 1)
+          $hash = $firstLine.Split(' ')[0]
+          & .github/scripts/release-notes.ps1 `
+            -Version $env:RN_VERSION `
+            -ExeName $env:RN_EXE_NAME `
+            -Sha256 $hash `
+            -Signed $env:RN_SIGNED `
+            -Signer $env:RN_SIGNER `
+            -GplSourceName '${{ steps.gplsrc.outputs.src_name }}'
+
+      # ---------- 9. 릴리스 생성 ----------
+      # 위 단계 중 하나라도 실패하면 여기까지 오지 않는다 = 서명 실패 시 릴리스가 생기지 않는다.
+      - name: GitHub Release 생성
+        uses: softprops/action-gh-release@v2
+        with:
+          name: DIAG.BENCH ${{ github.ref_name }}
+          body_path: RELEASE_NOTES.md
+          draft: false
+          # 0.x 버전은 정식 릴리스로 보지 않는다(사용자에게 사전 릴리스임을 알림)
+          prerelease: ${{ startsWith(steps.version.outputs.version, '0.') }}
+          files: |
+            ${{ steps.version.outputs.exe_name }}
+            ${{ steps.gplsrc.outputs.src_name }}
+            SHA256SUMS.txt
+          fail_on_unmatched_files: true
+
+      # ---------- 10. 웹사이트 갱신 ----------
+      # 릴리스가 만들어진 뒤 사이트를 다시 빌드해서 최신 버전/다운로드 링크가 반영되게 한다.
+      # (사이트는 빌드 시점에 최신 릴리스를 조회하므로, 릴리스 후 한 번 더 돌려야 한다)
+      - name: 웹사이트 재배포 트리거
+        if: success()
+        shell: pwsh
+        run: |
+          gh workflow run website.yml --ref main
+          Write-Host "웹사이트 재배포를 요청했습니다."
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}   # 태그 체크아웃 상태에서도 대상 저장소를 확실히 지정
+        continue-on-error: true   # 사이트 갱신 실패가 릴리스 자체를 무효화하지는 않는다
