@@ -80,8 +80,14 @@ jobs:
         run: npm run test-rules
 
       # ---------- 3. 빌드 ----------
-      - name: 설치 파일 빌드
-        run: node scripts/retry.js npm run build:win
+      # ⚠ 여기서도 --publish never 가 필요하다.
+      # electron-builder는 CI 환경만 감지해도 GitHub Release publish를 시도하는데,
+      # 이 워크플로는 **서명 검증을 통과한 파일만** softprops/action-gh-release로 올린다.
+      # electron-builder가 먼저 publish해버리면 (a) GH_TOKEN이 없어 빌드가 실패하거나
+      # (b) 서명 전 파일이 릴리스에 올라가는 위험이 생긴다. 둘 다 막는다.
+      # 릴리스 생성은 아래 9단계가 단독으로 책임진다.
+      - name: 설치 파일 빌드 (publish 안 함 — 릴리스는 서명 검증 후 9단계에서)
+        run: node scripts/retry.js npm run build:win -- --publish never
         env:
           electron_config_cache: ${{ github.workspace }}/.cache/electron
           ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder

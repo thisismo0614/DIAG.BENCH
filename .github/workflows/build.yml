@@ -92,8 +92,14 @@ jobs:
           NPM_CONFIG_FETCH_RETRY_MINTIMEOUT: '20000'
           NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: '120000'
 
-      - name: 설치 파일 빌드
-        run: node scripts/retry.js npm run build:win
+      # ⚠ --publish never 를 반드시 붙인다.
+      # electron-builder는 CI 환경을 감지하면 **태그가 없어도** 암묵적으로 GitHub Release
+      # publish를 시도한다("Implicit publishing triggered by CI detection"). 그러면
+      # GH_TOKEN이 없어서 빌드가 실패한다 — 실제로 이 CI에서 발생했다.
+      # 이 워크플로는 빌드 가능 여부만 확인하는 곳이고 릴리스는 release.yml이 태그 기준으로
+      # 따로 만들기 때문에, 여기서 publish할 이유가 전혀 없다.
+      - name: 설치 파일 빌드 (publish 안 함)
+        run: node scripts/retry.js npm run build:win -- --publish never
         env:
           electron_config_cache: ${{ github.workspace }}/.cache/electron
           ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
