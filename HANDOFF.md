@@ -21,23 +21,56 @@ Windows PC의 하드웨어/시스템 상태를 진단하는 Electron 데스크�
 
 ## 2. ⚠️ 작업 환경에 대해 반드시 알아야 할 것
 
-**이건 git 저장소가 아니다.** 사용자는 이전 대화(클라우드 세션 등)에서 만든 소스를 zip으로
-`Downloads` 폴더에 갖고 있고, 매번 그 zip을 이 로컬 Windows PC의 임시 스크래치패드 폴더에
-풀어서 수정한 뒤, 다시 zip과 `.exe` 설치파일로 만들어 `Downloads`에 돌려주는 식으로
-작업이 진행됐다. **작업을 시작하기 전에 최신 소스가 어디 있는지(Downloads의 zip 파일명,
-또는 사용자가 알려주는 경로) 반드시 먼저 확인할 것** — 버전이 여러 개 쌓여 있을 수 있다.
+### 🔴 다음 세션에서 가장 먼저 확인할 것 (2026-08-13 기준)
 
-**이 로컬 PC에는 Node.js/npm이 기본 설치되어 있지 않다.** 매번:
-1. `https://nodejs.org/dist/latest-v22.x/`에서 `node-vX.X.X-win-x64.zip`(포터블, 설치 불필요)을
-   받아서 압축을 풀고, `PATH`에 그 폴더를 앞에 붙여서 `node`/`npm`을 쓴다.
-2. 프로젝트 폴더에서 `npm install`(전체 devDependencies 포함, electron/electron-builder까지
-   받으면 몇 분 걸림) 실행.
-3. 빌드: `npm run build:win` (electron-builder, NSIS 인스톨러 생성). 이 PC가 실제 Windows라서
-   예전 로그에 나온 "리눅스 샌드박스에서 wine 설치해서 우회"할 필요 없이 네이티브로 빌드된다.
-4. 결과물(`dist/DIAG.BENCH Setup X.X.X.exe`)을 `Downloads`로 복사하고, 이전 버전 exe는 지운다.
-   소스 zip도 `node_modules`/`dist` 제외하고 다시 압축해서 `Downloads`에 갱신한다.
-5. `package.json`의 `version`은 기능을 추가할 때마다 올렸다(0.1.0 → 0.12.0). 규칙은 없지만
-   관례를 유지하는 게 사용자가 버전을 구분하기 쉽다.
+**push되지 않은 커밋이 1건 있다.**
+
+```
+6ed8762  ci: electron-builder의 암묵적 publish 비활성화   ← 로컬에만 있음
+b4cc2c8  ci: electron 바이너리 다운로드 실패에 재시도·캐시 적용   ← origin/main
+6fbfe5f  DIAG.BENCH v0.17.0
+```
+
+사용자가 `git push`를 아직 하지 않은 상태다. 작업을 시작하기 전에
+`git log --oneline origin/main..HEAD` 로 현재 상태를 먼저 확인할 것
+(그 사이에 사용자가 직접 push했을 수 있다).
+
+### 작업 방식이 바뀌었다 — 이제 git 저장소다
+
+**예전에는 zip을 주고받았지만, 2026-08-13부터 정식 git 저장소로 전환했다.**
+
+| 항목 | 값 |
+|---|---|
+| 로컬 경로 | `C:\Users\gwonm\Documents\diag-bench\diag-bench-desktop` |
+| 원격 | `https://github.com/thisismo0614/DIAG.BENCH.git` |
+| 브랜치 | `main` |
+
+`Downloads`의 zip은 **전환 시점의 백업일 뿐 더 이상 정본이 아니다.** 거기에 대고 작업하면
+git 이력과 어긋난다. 반드시 위 로컬 경로에서 작업할 것.
+
+> ⚠ **저장소 이름 불일치 주의**: 실제 저장소는 `thisismo0614/DIAG.BENCH`인데
+> `package.json`과 `website/site.config.json`에는 아직 `OWNER/diag-bench` placeholder가
+> 남아 있다. 웹사이트 링크와 npm 메타데이터가 실제와 다르므로 **사용자와 상의해서
+> 맞춰야 한다**(7장 "사용자가 직접 해야 하는 일" 참고).
+
+### Node.js
+
+**이 PC에는 Node.js/npm이 기본 설치되어 있지 않다.** 포터블 Node를 PATH 앞에 붙여 쓴다.
+
+```
+$env:PATH="C:\Users\gwonm\AppData\Local\Temp\claude\...\node-portable\node-v22.23.2-win-x64;$env:PATH"
+```
+
+⚠ 이 포터블 Node는 **임시 폴더에 있어서 지워졌을 수 있다.** 없으면
+`https://nodejs.org/dist/latest-v22.x/` 에서 `node-vX.X.X-win-x64.zip`(설치 불필요)을
+다시 받거나, 사용자가 정식 설치했는지 먼저 확인할 것(`node -v`).
+
+기본 명령:
+1. `npm ci` — 의존성 설치. electron이 ~106MB를 받으므로 느릴 수 있다(5장 18번 참고).
+2. `npm run test-rules` — 회귀 테스트 130개. **작업 전후로 반드시 돌린다.**
+3. `npm run build:win` — NSIS 인스톨러 생성 → `dist/DIAG.BENCH-Setup-<버전>-win-x64.exe`
+4. `package.json`의 `version`은 기능 추가마다 올린다(0.1.0 → 0.17.0). 릴리스 태그와
+   **반드시 일치해야 한다**(release.yml이 다르면 실패시킨다).
 
 **GUI 자동화 도구가 없다.** `claude-in-chrome`류의 브라우저 자동화는 있지만, **네이티브
 Electron 창을 클릭하는 도구는 없다.** 그래서 이 세션에서 쓴 검증 방법은:
@@ -240,6 +273,63 @@ Sensor Recording, Event Log Analysis, Detailed Result, Diagnosis Engine)은 **�
 
 ---
 
+18. **electron 설치는 CI에서 자주 깨진다 — 원인은 두 가지이고 둘 다 이미 처리했다.**
+
+    (a) **다운로드 실패**: `npm ci`는 electron postinstall에서 ~106MB 바이너리를 받는데,
+    `@electron/get`에 **재시도 로직이 전혀 없어서**(`retry` 검색 0건) 순간 끊기면
+    (`socket hang up`) 그대로 실패한다. GitHub Actions에서 2회 연속 발생했다.
+    → `scripts/retry.js`(지수 백오프 래퍼) + electron 바이너리 캐시로 해결.
+    캐시 경로 변수는 **`electron_config_cache`** 다(`ELECTRON_CACHE`가 아니다 —
+    `install.js`의 `cacheRoot: process.env.electron_config_cache` 로 확인).
+    프록시로 외부 다운로드를 완전히 차단한 상태에서 캐시만으로 2.9초에 성공하는 것을 실측했다.
+    참고: `setup-node`의 `cache: 'npm'`은 `~/.npm`만 덮어서 이 106MB를 캐싱하지 못한다.
+
+    (b) **암묵적 publish**: electron-builder는 `CI=true`만 감지해도(태그가 없어도!)
+    GitHub Release publish를 시도하고, `GH_TOKEN`이 없어 실패한다
+    ("Implicit publishing triggered by CI detection"). `CI=true`로 로컬 재현 확인.
+    → 워크플로에서 `npm run build:win -- --publish never` 로 해결.
+    **`package.json`은 건드리지 않았다** — 로컬 빌드 동작을 그대로 두기 위해서다.
+    release.yml에도 같은 조치를 했는데, 이유가 하나 더 있다: electron-builder가 먼저
+    publish하면 **서명 검증을 거치지 않은 파일이 릴리스에 올라갈 수 있다.**
+
+    ⚠ 새 워크플로에서 electron-builder를 부를 때는 **항상 `--publish never`를 붙일 것.**
+    릴리스 생성은 release.yml의 `action-gh-release` 단계가 단독으로 책임진다.
+
+---
+
+## 5-2. 배포 인프라 (2026-08-13 구축)
+
+```
+git tag vX.Y.Z  →  release.yml
+                     ├ 태그 ↔ package.json 버전 대조 (다르면 즉시 실패)
+                     ├ 회귀 테스트 130개
+                     ├ 빌드 (--publish never)
+                     ├ 산출물 검증 (크기·smartctl 동봉)
+                     ├ SignPath 서명        ← 저장소 변수가 있을 때만
+                     ├ Authenticode 검증    ← Valid 아니면 릴리스 안 만듦
+                     ├ GPL 소스 tarball 첨부 (체크섬 고정 검증)
+                     ├ SHA256SUMS
+                     ├ action-gh-release
+                     └ website.yml 트리거
+```
+
+| 파일 | 역할 |
+|---|---|
+| `.github/workflows/build.yml` | 평소 push/PR CI (태그 제외). 테스트(ubuntu) → 빌드(windows) |
+| `.github/workflows/release.yml` | 태그 기반 릴리스 전 과정 |
+| `.github/workflows/website.yml` | GitHub Pages 배포 |
+| `.github/scripts/release-notes.ps1` | 릴리스 노트 생성 (**UTF-8 BOM 필수** — 5장 참고) |
+| `scripts/retry.js` | 네트워크 재시도 래퍼 (의존성 없음, Windows/Linux 공용) |
+| `website/` | 정적 공식 사이트. `node build.js` → `dist/` |
+
+**설계 원칙 두 가지 (반드시 유지)**
+1. **서명됐다고 거짓말하지 않는다.** 서명 시도 후 실패 → 릴리스 없음.
+   SignPath 미설정 → 릴리스는 만들되 "미서명"이라고 명시.
+2. **사이트는 런타임에 GitHub API를 호출하지 않는다.** 빌드 시점에 한 번만 조회해
+   HTML에 값을 박는다(rate limit·API 장애로 다운로드가 깨지지 않게).
+
+---
+
 ## 5-1. 진단 결과의 신뢰성을 지키는 구조 (반드시 유지할 것)
 
 이 프로젝트에서 가장 위험한 버그는 크래시가 아니라 **"검사에서 문제가 나왔는데 정상이라고
@@ -314,10 +404,54 @@ Sensor Recording, Event Log Analysis, Detailed Result, Diagnosis Engine)은 **�
 
 ## 8. 시작하기 전 체크리스트
 
-1. 사용자에게 최신 소스가 있는 위치(zip 파일명 또는 경로)를 확인한다.
-2. 포터블 Node.js가 이미 스크래치 폴더에 있는지 확인하고, 없으면 위 2장 방법대로 받는다.
-3. `npm install` → `npm run test-rules`로 기존 130개 테스트가 다 통과하는지 먼저 확인한다
-   (회귀 여부를 나중에 판단할 기준선이 된다).
-4. 5장의 함정 목록을 먼저 훑어서 같은 삽질을 반복하지 않는다.
-5. 작업 후에는 반드시: `npm run test-rules` 재확인 → `npm run build:win` → 결과 exe를
-   `Downloads`로 복사(이전 버전 삭제) → 소스도 zip으로 갱신 → `package.json` 버전 올리기.
+```powershell
+cd C:\Users\gwonm\Documents\diag-bench\diag-bench-desktop
+git log --oneline -3                      # 어디까지 커밋됐나
+git log --oneline origin/main..HEAD       # push 안 된 커밋 (지금은 6ed8762 1건)
+git status --short                        # 작업 중이던 변경이 있나
+node -v                                   # 없으면 포터블 Node 준비 (2장)
+npm run test-rules                        # 기준선: 130/130 통과해야 함
+```
+
+1. **위 명령으로 현재 상태를 먼저 확인한다.** 특히 push 여부 — 사용자가 그 사이에
+   직접 push했을 수 있다.
+2. 5장의 함정 목록을 훑어 같은 삽질을 반복하지 않는다.
+3. 작업 후에는 반드시 `npm run test-rules` 재확인 → 필요시 `npm run build:win`.
+4. 커밋은 하되 **push는 사용자 확인을 받고 한다**(지금까지 그렇게 진행해왔다).
+5. 기능을 추가했으면 `package.json`의 version을 올린다. 릴리스 태그와 반드시 일치해야 한다.
+
+---
+
+## 9. 사용자가 직접 해야 하는 일 (2026-08-13 기준 미완료)
+
+코드로 해결할 수 없고 사용자 계정·결정이 필요한 항목들이다.
+
+| # | 항목 | 상태 | 비고 |
+|---|---|---|---|
+| 1 | `git push` | **대기 중** | 로컬 커밋 `6ed8762` 1건 |
+| 2 | `OWNER` placeholder 교체 | 미완료 | ⚠ 아래 참고 |
+| 3 | GitHub Pages 활성화 | 미확인 | Settings → Pages → Source: **GitHub Actions** |
+| 4 | SignPath Open Source 신청 | 미완료 | 승인까지 시간 걸림. 그동안은 "미서명" 릴리스로 배포됨 |
+| 5 | SignPath 변수·시크릿 등록 | 미완료 | Variables 2개 + Secret 1개 (`docs/RELEASING.md` 3절) |
+| 6 | 첫 릴리스 태그 | 미완료 | `git tag v0.17.0 && git push origin v0.17.0` |
+| 7 | 도메인 연결 | 선택 | `docs/RELEASING.md` 5절 |
+
+### ⚠ 2번 — 저장소 이름이 문서와 다르다
+
+실제 저장소는 **`thisismo0614/DIAG.BENCH`** 인데, 코드의 placeholder는 `OWNER/diag-bench`다.
+저장소명 자체가 다르므로 단순 치환으로는 안 되고 **사용자에게 어느 쪽에 맞출지 물어봐야 한다.**
+
+바꿔야 할 곳:
+
+| 파일 | 항목 |
+|---|---|
+| `website/site.config.json` | `owner`, `repo`, `siteUrl` ← **사이트 링크에 실제 반영됨** |
+| `package.json` | `homepage`, `repository.url`, `bugs.url` (npm 메타데이터, 기능엔 영향 없음) |
+
+GitHub Actions에서는 `owner`/`repo`를 워크플로가 자동으로 덮어쓰므로(`github.repository_owner`)
+**실제로 문제가 되는 건 `siteUrl`이다.** 현재 값은 `https://OWNER.github.io/diag-bench`인데
+실제 Pages 주소는 `https://thisismo0614.github.io/DIAG.BENCH/`가 된다 — canonical URL과
+sitemap이 틀린 주소를 가리키게 되므로 SEO에 영향이 있다.
+
+> 참고: 저장소 변수 `SITE_URL`을 설정하면 `site.config.json`보다 우선한다.
+> 파일을 안 고치고 변수만 설정해도 된다.
