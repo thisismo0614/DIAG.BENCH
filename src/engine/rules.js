@@ -72,21 +72,24 @@ function evaluateCpu(cpu, trend, topProcesses, cpuStress, baselineComparison, co
         ['쿨러 장착 불량 또는 서멀 그리스 열화', '케이스 흡배기 부족', '고부하 작업(렌더링/게임) 지속'],
         ['CPU 쿨러 장착 상태 재확인', '서멀 그리스 재도포 고려', '케이스 팬 흡배기 방향 점검'],
         95, [`온도 ${cpu.tempC}°C (위험 임계값 95°C 이상)`],
-        '조치 후 안정성 테스트 탭에서 CPU 부하 테스트를 다시 실행해 최고 온도가 낮아졌는지 확인하세요.'));
+        '조치 후 안정성 테스트 탭에서 CPU 부하 테스트를 다시 실행해 최고 온도가 낮아졌는지 확인하세요.',
+        { id: 'CPU-TEMP-CRITICAL', params: { tempC: cpu.tempC } }));
     } else if (cpu.tempC >= 85 && cpu.loadPercent >= 80) {
       issues.push(mkIssue('warning', 'CPU가 고부하 상태에서 온도가 높습니다',
         `부하 ${cpu.loadPercent}% 상태에서 온도가 ${cpu.tempC}°C까지 상승했습니다. 지속되면 스로틀링 가능성이 있습니다.`,
         ['공랭/수랭 쿨러 냉각 성능 한계', '주변 온도가 높은 환경', '먼지로 인한 방열판 성능 저하'],
         ['부하가 큰 작업을 몇 분 지속하며 온도 추이 관찰', '케이스 내부 먼지 제거', '필요 시 쿨러 교체 검토'],
         62, [`부하 ${cpu.loadPercent}%`, `온도 ${cpu.tempC}°C`, '단일 시점 측정 (추이 미확인)'],
-        '안정성 테스트 탭의 CPU 부하 테스트를 15초간 실행해 온도가 계속 상승하는지, 클럭이 떨어지는지 확인하세요.'));
+        '안정성 테스트 탭의 CPU 부하 테스트를 15초간 실행해 온도가 계속 상승하는지, 클럭이 떨어지는지 확인하세요.',
+        { id: 'CPU-TEMP-HIGH-UNDER-LOAD', params: { tempC: cpu.tempC, loadPercent: cpu.loadPercent } }));
     } else if (cpu.tempC >= 78 && cpu.loadPercent >= 70) {
       issues.push(mkIssue('watch', 'CPU 온도가 다소 높은 편입니다',
         `부하 ${cpu.loadPercent}% 상태에서 온도가 ${cpu.tempC}°C입니다. 즉각적인 문제는 아니지만 지켜볼 필요가 있습니다.`,
         ['일반적인 고부하 작업 중일 가능성', '냉각 여유가 줄어들고 있을 가능성'],
         ['특별한 조치 없이 지켜봐도 되지만, 계속 상승하면 안정성 테스트를 실행해 확인하세요'],
         40, [`부하 ${cpu.loadPercent}%`, `온도 ${cpu.tempC}°C`, '경고 임계값(85°C) 미만 — 근거 부족으로 판단 보류'],
-        '평소보다 온도가 높다고 느껴지면 안정성 테스트 탭에서 CPU 부하 테스트를 실행해 추이를 확인하세요.'));
+        '평소보다 온도가 높다고 느껴지면 안정성 테스트 탭에서 CPU 부하 테스트를 실행해 추이를 확인하세요.',
+        { id: 'CPU-TEMP-ELEVATED', params: { tempC: cpu.tempC, loadPercent: cpu.loadPercent } }));
     }
   }
 
@@ -102,7 +105,10 @@ function evaluateCpu(cpu, trend, topProcesses, cpuStress, baselineComparison, co
         ['냉각 성능 부족으로 인한 열 제한(throttling)', '고온 환경에서의 장시간 고부하 작업', '메인보드 전력 제한 설정'],
         ['케이스 airflow(흡기/배기) 확인', 'CPU 쿨러 장착 재확인', '메인보드 전력 제한(PL1/PL2) 설정 확인'],
         87, ['고부하 지속 확인됨', '온도 상승 추세 확인됨', '클럭 하락 추세 확인됨'],
-        '케이스를 열어 airflow를 개선한 뒤 안정성 테스트 탭에서 CPU 부하 테스트를 재실행해 클럭 하락폭이 줄어드는지 비교하세요.'));
+        '케이스를 열어 airflow를 개선한 뒤 안정성 테스트 탭에서 CPU 부하 테스트를 재실행해 클럭 하락폭이 줄어드는지 비교하세요.',
+        { id: 'CPU-THERMAL-THROTTLING', params: {
+          tempFrom: first.tempC, tempTo: last.tempC, clockFrom: first.clockGHz, clockTo: last.clockGHz,
+        } }));
     } else if (loadHigh && tempRising && !clockDropping) {
       // 온도는 오르지만 클럭 하락까지는 확인되지 않은 경우 — "스로틀링"이라 단정하지 않는다.
       issues.push(mkIssue('watch', 'CPU 온도가 상승 중이지만 스로틀링 근거는 아직 부족합니다',
@@ -110,7 +116,10 @@ function evaluateCpu(cpu, trend, topProcesses, cpuStress, baselineComparison, co
         ['정상적인 고부하 반응(아직 스로틀링 아님)', '온도가 더 상승하면 스로틀링으로 이어질 가능성'],
         ['지금 당장 조치할 필요는 없지만, 같은 작업을 더 길게 지속하며 온도 추이를 지켜보세요'],
         45, ['온도 상승 확인됨', '클럭 하락은 확인되지 않음 — 스로틀링 판정 보류'],
-        '안정성 테스트 탭에서 CPU 부하 테스트를 더 길게(예: 60초) 돌려 온도가 계속 오르는지, 그때도 클럭이 유지되는지 확인하세요.'));
+        '안정성 테스트 탭에서 CPU 부하 테스트를 더 길게(예: 60초) 돌려 온도가 계속 오르는지, 그때도 클럭이 유지되는지 확인하세요.',
+        { id: 'CPU-TEMP-RISING-NO-THROTTLE', params: {
+          tempFrom: first.tempC, tempTo: last.tempC, clockFrom: first.clockGHz, clockTo: last.clockGHz,
+        } }));
     }
   }
 
@@ -120,7 +129,8 @@ function evaluateCpu(cpu, trend, topProcesses, cpuStress, baselineComparison, co
       ['백그라운드 프로세스 과다 실행', '무한 루프 등 비정상 프로세스', '단순 고부하 작업 중'],
       ['작업 관리자에서 CPU 사용률 높은 프로세스 확인', '불필요한 시작 프로그램 정리'],
       55, [`부하 ${cpu.loadPercent}%`],
-      '의심되는 프로세스를 종료한 뒤 전체 진단을 다시 실행해 CPU 부하가 정상 범위로 돌아왔는지 확인하세요.');
+      '의심되는 프로세스를 종료한 뒤 전체 진단을 다시 실행해 CPU 부하가 정상 범위로 돌아왔는지 확인하세요.',
+      { id: 'CPU-LOAD-VERY-HIGH', params: { loadPercent: cpu.loadPercent } });
     if (topProcesses && topProcesses.byCpu && topProcesses.byCpu.length) {
       issue.topProcesses = topProcesses.byCpu.slice(0, 5);
     }
@@ -181,7 +191,10 @@ function evaluateMemory(mem, topProcesses, ramTest, baselineComparison, memModul
       ['동시 실행 프로그램/브라우저 탭 과다', '메모리 누수가 있는 프로그램', '물리 메모리 용량 자체 부족'],
       ['불필요한 프로그램 종료', '작업 관리자에서 메모리 점유 높은 프로세스 확인', '반복된다면 RAM 증설 고려'],
       75, [`메모리 사용률 ${mem.usedPercent}%`, `가용 메모리 ${mem.availableGB}GB`],
-      '프로그램을 정리한 뒤 전체 진단을 다시 실행해 사용률이 내려갔는지 확인하세요.');
+      '프로그램을 정리한 뒤 전체 진단을 다시 실행해 사용률이 내려갔는지 확인하세요.',
+      { id: 'MEM-USAGE-NEAR-LIMIT', params: {
+        totalGB: mem.totalGB, usedGB: mem.usedGB, usedPercent: mem.usedPercent, availableGB: mem.availableGB,
+      } });
     if (topProcesses && topProcesses.byMem && topProcesses.byMem.length) {
       issue.topProcesses = topProcesses.byMem.slice(0, 5);
     }
@@ -193,7 +206,8 @@ function evaluateMemory(mem, topProcesses, ramTest, baselineComparison, memModul
       ['물리 RAM 부족'],
       ['실행 중인 프로그램 수 줄이기', 'RAM 증설 검토'],
       70, [`스왑 ${mem.swapUsedGB}GB / ${mem.swapTotalGB}GB 사용 중`],
-      '재부팅 후 동일 작업을 반복하며 스왑 사용량 추이를 다시 확인하세요.'));
+      '재부팅 후 동일 작업을 반복하며 스왑 사용량 추이를 다시 확인하세요.',
+      { id: 'MEM-SWAP-HIGH', params: { swapUsedGB: mem.swapUsedGB, swapTotalGB: mem.swapTotalGB } }));
   }
   const normalEvidence = [`사용률 ${mem.usedPercent}%`, `가용 메모리 ${mem.availableGB}GB / 전체 ${mem.totalGB}GB`, ...ram.evidence, ...base.evidence, ...cfg.evidence];
   const section = finalize('RAM', issues, null, normalEvidence, {
@@ -480,7 +494,8 @@ function cpuStressFindings(cpuStress) {
       ['일시적인 시스템 자원 부족', '보안 프로그램의 스레드 생성 차단'],
       ['다른 프로그램을 종료한 뒤 다시 실행해보세요'],
       null, ['부하 테스트 실행 실패 — 판단 보류'],
-      '"안정성 테스트 > CPU 부하 테스트"를 다시 실행해보세요.'));
+      '"안정성 테스트 > CPU 부하 테스트"를 다시 실행해보세요.',
+      { id: 'CPU-STRESS-WORKER-ERROR', params: { workerError: cpuStress.workerError } }));
     return { issues, evidence };
   }
 
@@ -490,7 +505,8 @@ function cpuStressFindings(cpuStress) {
       ['쿨러 장착 불량 또는 서멀 그리스 노후', '쿨러 성능 대비 과도한 CPU 설정(오버클럭/전력 제한 해제)', '케이스 내부 공기 흐름 부족'],
       ['쿨러가 제대로 밀착되어 있는지 확인', '방열판/팬 먼지 제거', '실제 사용하는 작업에서 실시간 모니터링으로 온도 확인'],
       75, [`부하 테스트 중 최고 온도 ${cpuStress.maxTempC}°C`, `안전 한계 ${cpuStress.safetyTempC}°C 도달로 자동 중단`],
-      '먼지 제거 후 같은 부하 테스트를 다시 실행해 최고 온도가 내려갔는지 비교하세요.'));
+      '먼지 제거 후 같은 부하 테스트를 다시 실행해 최고 온도가 내려갔는지 비교하세요.',
+      { id: 'CPU-STRESS-SAFETY-ABORT', params: { safetyTempC: cpuStress.safetyTempC, maxTempC: cpuStress.maxTempC } }));
   } else if (cpuStress.clockDroppedUnderLoad && cpuStress.maxTempC !== null && cpuStress.maxTempC >= 80) {
     // 클럭 하락만으로는 스로틀링이라고 못 한다(전력 관리 정책일 수도 있다).
     // 온도까지 높을 때만 열 문제로 본다.
@@ -499,7 +515,10 @@ function cpuStressFindings(cpuStress) {
       ['열 제한(thermal throttling)', '메인보드 전력 제한 설정', '정상적인 터보 부스트 동작'],
       ['먼지 제거 후 재검사해 클럭 변동 폭이 줄어드는지 확인'],
       45, [`클럭 ${cpuStress.maxClockGHz}GHz → ${cpuStress.minClockGHz}GHz`, `최고 온도 ${cpuStress.maxTempC}°C`],
-      '냉각을 개선한 뒤 같은 테스트를 반복해 클럭 유지 여부를 비교하세요.'));
+      '냉각을 개선한 뒤 같은 테스트를 반복해 클럭 유지 여부를 비교하세요.',
+      { id: 'CPU-STRESS-CLOCK-DROP', params: {
+        maxClockGHz: cpuStress.maxClockGHz, minClockGHz: cpuStress.minClockGHz, maxTempC: cpuStress.maxTempC,
+      } }));
   }
 
   // 온도를 못 읽었으면 "온도 안전장치가 동작했다"고 말하면 안 된다.
@@ -536,14 +555,19 @@ function ramTestFindings(ramTest) {
       ['메모리 모듈 불량', '메모리 오버클럭(XMP/EXPO)이 불안정함', '메모리 슬롯/접촉 불량', 'CPU 메모리 컨트롤러 이상'],
       ['중요 데이터를 먼저 백업하세요', '메모리 오버클럭(XMP/EXPO)을 껐다가 다시 검사', 'RAM을 한 개씩만 꽂아 어느 모듈에서 재현되는지 확인', 'MemTest86 등 부팅형 정밀 검사로 교차 확인'],
       88, [`불일치 ${ramTest.errors.toLocaleString()}건`, `검사 크기 ${ramTest.sizeMB}MB`, `검사한 패턴 ${ramTest.patternsRun}종`],
-      'MemTest86 같은 부팅형 도구로 최소 1회 전체 검사를 돌려 같은 결과가 나오는지 반드시 교차 확인하세요.'));
+      'MemTest86 같은 부팅형 도구로 최소 1회 전체 검사를 돌려 같은 결과가 나오는지 반드시 교차 확인하세요.',
+      { id: 'RAM-TEST-MISMATCH', params: {
+        errors: ramTest.errors, sizeMB: ramTest.sizeMB,
+        firstErrorOffset: ramTest.firstErrorOffset, patternsRun: ramTest.patternsRun,
+      } }));
   } else if (!ramTest.completed) {
     issues.push(mkIssue('watch', 'RAM 무결성 검사를 완료하지 못했습니다',
       `검사가 끝까지 진행되지 않았습니다(${ramTest.error || '원인 미상'}). 이 결과로는 메모리 상태를 판단할 수 없습니다.`,
       ['검사용 메모리를 확보하지 못함(사용 가능한 RAM 부족)', '검사 중 오류 발생'],
       ['다른 프로그램을 종료한 뒤 더 작은 크기로 다시 검사'],
       null, ['RAM 검사 미완료 — 판단 보류'],
-      '실행 중인 프로그램을 정리한 뒤 다시 검사해보세요.'));
+      '실행 중인 프로그램을 정리한 뒤 다시 검사해보세요.',
+      { id: 'RAM-TEST-INCOMPLETE', params: { error: ramTest.error } }));
   } else {
     evidence.push(`RAM 무결성 간이검사: ${ramTest.sizeMB}MB / 패턴 ${ramTest.patternsRun}종 이상 없음 (부팅형 정밀 검사를 대체하지 않음)`);
   }
@@ -562,21 +586,24 @@ function storageTestFindings(storageTest) {
       ['저장장치 불량 또는 수명 말기', '케이블/컨트롤러 접촉 불량', '파일시스템 손상'],
       ['중요 데이터를 즉시 백업하세요', 'SMART 상태를 함께 확인', 'SATA 케이블 교체 또는 다른 포트에 연결해 재검사', 'chkdsk로 파일시스템 점검'],
       90, ['쓰기/읽기 데이터 불일치 확인됨'],
-      '백업 후 같은 검사를 다시 실행하고, 제조사 진단 도구로도 교차 확인하세요.'));
+      '백업 후 같은 검사를 다시 실행하고, 제조사 진단 도구로도 교차 확인하세요.',
+      { id: 'STORAGE-TEST-VERIFY-MISMATCH', params: {} }));
   } else if (storageTest.errorStage === 'precheck') {
     issues.push(mkIssue('watch', '저장장치 처리량 테스트를 실행하지 못했습니다',
       `${storageTest.error}. 검사를 건너뛰었으므로 저장장치 성능은 확인되지 않았습니다.`,
       ['임시 폴더가 있는 드라이브의 여유 공간 부족'],
       ['불필요한 파일을 정리한 뒤 다시 검사하세요'],
       null, ['검사 미실행 — 판단 보류'],
-      '여유 공간을 확보한 뒤 다시 검사해보세요.'));
+      '여유 공간을 확보한 뒤 다시 검사해보세요.',
+      { id: 'STORAGE-TEST-PRECHECK-FAILED', params: { error: storageTest.error } }));
   } else if (storageTest.error || storageTest.ioErrors > 0) {
     issues.push(mkIssue('warning', '저장장치 읽기/쓰기 중 오류가 발생했습니다',
       `테스트 파일을 쓰거나 읽는 과정에서 오류가 났습니다(${storageTest.errorStage || '단계 미상'}: ${storageTest.error || '원인 미상'}). 처리량이 느린 것과는 다른 문제입니다.`,
       ['저장장치 이상', '드라이브 여유 공간 부족', '권한 문제 또는 보안 프로그램 차단', '파일시스템 오류'],
       ['SMART 상태 확인', '여유 공간 확보 후 재검사', 'chkdsk로 파일시스템 점검'],
       70, [`오류 단계: ${storageTest.errorStage || '미상'}`, `메시지: ${storageTest.error || '없음'}`],
-      '여유 공간을 확보하고 보안 프로그램을 잠시 끈 뒤 다시 검사해보세요.'));
+      '여유 공간을 확보하고 보안 프로그램을 잠시 끈 뒤 다시 검사해보세요.',
+      { id: 'STORAGE-TEST-IO-ERROR', params: { errorStage: storageTest.errorStage, error: storageTest.error } }));
   } else if (storageTest.completed) {
     // 속도는 장치 종류에 따라 수십 배 차이 나므로 임계값으로 판정하지 않고 측정값만 남긴다.
     evidence.push(`저장장치 처리량 테스트: 쓰기 ${storageTest.writeMBps}MB/s, 읽기 ${storageTest.readMBps}MB/s (${storageTest.sizeMB}MB 순차 I/O, 장치 종류에 따라 정상 범위가 크게 다르므로 속도만으로는 판정하지 않음)`);
@@ -810,7 +837,8 @@ function evaluateNetwork(net) {
         ['Wi-Fi 신호 약함', 'ISP 회선 혼잡', '공유기 성능/거리 문제'],
         ['유선 연결로 재측정', '공유기 재부팅', '다른 시간대에 재측정해 ISP 문제인지 확인'],
         70, [`평균 핑 ${p.avgMs}ms`],
-        '유선으로 연결하거나 공유기 재부팅 후 인터넷 속도 테스트 탭에서 핑을 다시 측정하세요.'));
+        '유선으로 연결하거나 공유기 재부팅 후 인터넷 속도 테스트 탭에서 핑을 다시 측정하세요.',
+        { id: 'NET-LATENCY-HIGH', params: { avgMs: p.avgMs } }));
     }
     if (p.jitterMs !== null && p.jitterMs >= 15) {
       issues.push(mkIssue('warning', '네트워크 지터(변동폭)가 큽니다',
@@ -818,7 +846,8 @@ function evaluateNetwork(net) {
         ['Wi-Fi 간섭', '동시 대역폭 사용(다운로드/스트리밍)'],
         ['유선 연결 시도', '동시 사용 기기/다운로드 확인'],
         65, [`지터 ${p.jitterMs}ms`],
-        '다른 기기의 다운로드/스트리밍을 멈춘 뒤 인터넷 속도 테스트를 다시 실행해 지터가 줄어드는지 확인하세요.'));
+        '다른 기기의 다운로드/스트리밍을 멈춘 뒤 인터넷 속도 테스트를 다시 실행해 지터가 줄어드는지 확인하세요.',
+        { id: 'NET-JITTER-HIGH', params: { jitterMs: p.jitterMs } }));
     }
   }
   if (p.lossPercent) {
@@ -827,7 +856,8 @@ function evaluateNetwork(net) {
       ['회선 불안정', '공유기/모뎀 이상', 'Wi-Fi 간섭'],
       ['공유기/모뎀 재부팅', '유선 연결 테스트', '지속 시 ISP 문의'],
       90, [`패킷 손실률 ${p.lossPercent}%`],
-      '공유기 재부팅 후 몇 분 지나 다시 측정해 손실률이 0%로 돌아오는지 확인하세요.'));
+      '공유기 재부팅 후 몇 분 지나 다시 측정해 손실률이 0%로 돌아오는지 확인하세요.',
+      { id: 'NET-PACKET-LOSS', params: { lossPercent: p.lossPercent } }));
   }
   const normalEvidence = p.avgMs !== null ? [`핑 ${p.avgMs}ms`, `지터 ${p.jitterMs}ms`, `손실 ${p.lossPercent ?? 0}%`] : [];
   // 핑을 못 쟀으면(오프라인, 방화벽 차단 등) 네트워크가 정상이라고 말할 근거가 없다.
@@ -917,7 +947,8 @@ function evaluateSystem(system) {
       ['드라이버 미설치/손상', '하드웨어 연결 불량'],
       ['장치관리자에서 드라이버 업데이트/재설치', '제조사 최신 드라이버 다운로드'],
       85, [`오류 장치 ${system.driverErrors.length}개 확인됨`],
-      '드라이버 재설치 후 장치관리자에서 오류 아이콘이 사라졌는지 확인하세요.'));
+      '드라이버 재설치 후 장치관리자에서 오류 아이콘이 사라졌는지 확인하세요.',
+      { id: 'DRIVER-ERROR-DEVICES', params: { names, count: system.driverErrors.length } }));
   }
   const normalEvidence = [`오류 장치 0개`, `${system.distro || system.platform} 확인됨`];
   // 드라이버 오류 조회는 Windows에서만 되고, Windows여도 조회가 실패할 수 있다.
@@ -1487,13 +1518,22 @@ function buildReport({ cpu, cpuTrend, memory, memoryModules, overclockState, bat
 }
 
 // ---------- helpers ----------
-function mkIssue(level, title, explanation, causes, actions, confidence, evidence, verification) {
+// msg: 다국어용 메시지 식별자와 그 문장에 박힌 측정값. `{ id, params }`.
+//
+// 왜 번역을 여기서 하지 않는가 — 판정과 번역은 시점이 다르다. 규칙은 "지금 이 값이
+// 위험한가"를 정하고, 번역은 "그 결론을 어느 언어로 읽을 것인가"를 정한다. 섞어두면
+// 언어를 하나 추가할 때마다 판정 코드를 건드리게 된다.
+// 그래서 여기서는 **id와 값만 남기고**, 번역은 완성된 리포트를 받아 reportI18n.js가 한다.
+//
+// id를 안 붙인 이슈는 번역되지 않고 원문(한국어)으로 남는다 — 그 사실이 통계에 잡힌다.
+function mkIssue(level, title, explanation, causes, actions, confidence, evidence, verification, msg) {
   return {
     level, title, explanation, causes, actions,
     confidence: confidence ?? null,
     confidenceLabel: confidenceLabel(confidence),
     evidence: evidence || [],
     verification: verification || null,
+    msg: msg || null,
   };
 }
 function confidenceLabel(score) {

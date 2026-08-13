@@ -16,6 +16,7 @@ const {
   riskLabels, translationStatus,
 } = require('../src/engine/issueDb');
 const { normalizeLocale, resolveLocale, SUPPORTED_LOCALES, SOURCE_LOCALE } = require('../src/i18n');
+const { localizeReport } = require('../src/engine/reportI18n');
 const { versionInfo } = require('../src/engine/version');
 const { sanitize: sanitizeSettings, DEFAULTS: SETTINGS_DEFAULTS } = require('../src/engine/settings');
 const { compareSessions } = require('../src/engine/sessionCompare');
@@ -2707,6 +2708,154 @@ test('영어 번역문에 한글이 섞여 있지 않다', () => {
     texts.forEach((t) => {
       assert.ok(!/[가-힣]/.test(t), `${e.id}: 영어판에 한글이 남아 있음 — ${t}`);
     });
+  });
+});
+
+// ============================================================
+section('다국어 (i18n) — 진단 리포트의 판정 문구');
+// ============================================================
+// 규칙이 만든 문장은 측정값이 박혀 있어서 지식 DB와 다루는 법이 다르다.
+// 판정은 rules.js가 하고, 번역은 완성된 리포트를 받아 reportI18n.js가 한다.
+// **여기서 판정이 바뀌면 영어 화면에서 critical이 watch로 보인다.**
+
+function hotCpuReport() {
+  return buildReport(baseInput({ cpu: { model: 'Test CPU', loadPercent: 30, tempC: 96, clockGHz: 3.5 } }));
+}
+function allIssues(r) {
+  return (r.sections || []).flatMap((s) => s.issues || []);
+}
+
+test('규칙이 만든 이슈에 메시지 id가 붙는다', () => {
+  const issue = allIssues(hotCpuReport()).find((i) => i.msg && i.msg.id === 'CPU-TEMP-CRITICAL');
+  assert.ok(issue, 'CPU-TEMP-CRITICAL 이슈에 id가 없음');
+  assert.strictEqual(issue.msg.params.tempC, 96, '문장에 박힌 측정값이 params로 남아야 함');
+});
+
+test('언어를 지정하지 않거나 한국어면 원문 그대로다', () => {
+  const r = hotCpuReport();
+  const ko = localizeReport(r, 'ko');
+  const issue = allIssues(ko).find((i) => i.msg && i.msg.id === 'CPU-TEMP-CRITICAL');
+  assert.strictEqual(issue.title, 'CPU 온도가 위험 수준입니다');
+  assert.ok(issue.explanation.includes('96°C'));
+});
+
+test('영어로 옮기면 측정값이 그대로 문장에 들어간다', () => {
+  const en = localizeReport(hotCpuReport(), 'en');
+  const issue = allIssues(en).find((i) => i.msg && i.msg.id === 'CPU-TEMP-CRITICAL');
+  assert.ok(issue.translated, '번역되지 않음');
+  assert.strictEqual(issue.title, 'CPU temperature is at a dangerous level');
+  assert.ok(issue.explanation.includes('96°C'), `측정값이 빠짐: ${issue.explanation}`);
+  assert.ok(issue.evidence[0].includes('96°C'), `근거에 측정값이 빠짐: ${issue.evidence[0]}`);
+  assert.ok(!/[가-힣]/.test(issue.title + issue.explanation + issue.evidence.join('')));
+});
+
+test('[핵심] 번역이 심각도와 신뢰도를 바꾸지 못한다', () => {
+  const r = hotCpuReport();
+  const en = localizeReport(r, 'en');
+  const before = allIssues(r);
+  const after = allIssues(en);
+  assert.strictEqual(after.length, before.length, '이슈 개수가 달라짐');
+  before.forEach((b, i) => {
+    const a = after[i];
+    assert.strictEqual(a.level, b.level, `${b.msg && b.msg.id}: 심각도가 바뀜`);
+    assert.strictEqual(a.confidence, b.confidence, `${b.msg && b.msg.id}: 신뢰도가 바뀜`);
+    assert.strictEqual(a.confidenceLabel, b.confidenceLabel);
+    assert.strictEqual(a.evidence.length, b.evidence.length, `${b.msg && b.msg.id}: 근거 개수가 바뀜`);
+    assert.strictEqual((a.causes || []).length, (b.causes || []).length);
+    assert.strictEqual((a.actions || []).length, (b.actions || []).length);
+  });
+  // 카테고리 상태와 등급도 그대로여야 한다.
+  r.sections.forEach((s, i) => {
+    assert.strictEqual(en.sections[i].status, s.status, `${s.category}: 상태가 바뀜`);
+    assert.strictEqual(en.sections[i].result, s.result, `${s.category}: 결과 상태가 바뀜`);
+  });
+});
+
+test('원본 리포트를 건드리지 않는다', () => {
+  const r = hotCpuReport();
+  const title = allIssues(r).find((i) => i.msg && i.msg.id === 'CPU-TEMP-CRITICAL').title;
+  localizeReport(r, 'en');
+  assert.strictEqual(allIssues(r).find((i) => i.msg && i.msg.id === 'CPU-TEMP-CRITICAL').title, title,
+    '번역이 원본을 덮어씀');
+});
+
+test('[핵심] 번역의 근거 개수가 어긋나면 그 이슈만 원문으로 남는다', () => {
+  // 근거가 조용히 사라지는 것은 판정을 조용히 바꾸는 것과 같다.
+  const catalog = require('../src/i18n/rules/en');
+  const saved = catalog['CPU-TEMP-CRITICAL'].evidence;
+  try {
+    catalog['CPU-TEMP-CRITICAL'].evidence = () => [];   // 근거를 통째로 없앤 번역
+    const en = localizeReport(hotCpuReport(), 'en');
+    const issue = allIssues(en).find((i) => i.msg && i.msg.id === 'CPU-TEMP-CRITICAL');
+    assert.strictEqual(issue.translated, false, '어긋난 번역이 적용됨');
+    assert.ok(/[가-힣]/.test(issue.title), '원문으로 돌아가야 함');
+    assert.strictEqual(issue.evidence.length, 1, '근거가 원문 개수 그대로여야 함');
+  } finally {
+    catalog['CPU-TEMP-CRITICAL'].evidence = saved;
+  }
+  assert.ok(allIssues(localizeReport(hotCpuReport(), 'en'))
+    .find((i) => i.msg && i.msg.id === 'CPU-TEMP-CRITICAL').translated, '되돌리기 실패');
+});
+
+test('아직 옮기지 않은 이슈는 원문으로 남고 통계에 잡힌다', () => {
+  const en = localizeReport(hotCpuReport(), 'en');
+  assert.strictEqual(en.i18n.locale, 'en');
+  assert.ok(en.i18n.total >= 1);
+  assert.strictEqual(typeof en.i18n.translated, 'number');
+  // 번역 안 된 것은 숨기지 않고 목록으로 남긴다.
+  assert.ok(Array.isArray(en.i18n.missing));
+  assert.strictEqual(en.i18n.translated + en.i18n.missing.length, en.i18n.total,
+    '번역/미번역 합이 전체와 다름 — 통계가 사실과 어긋남');
+});
+
+test('지원하지 않는 언어는 원문 리포트를 그대로 준다', () => {
+  const fr = localizeReport(hotCpuReport(), 'fr');
+  assert.strictEqual(fr.i18n.locale, 'ko');
+  const issue = allIssues(fr).find((i) => i.msg && i.msg.id === 'CPU-TEMP-CRITICAL');
+  assert.ok(/[가-힣]/.test(issue.title));
+});
+
+test('rules.js의 메시지 id와 카탈로그가 정확히 대응한다', () => {
+  // 오타 하나면 그 이슈는 조용히 한국어로 남는다. 눈으로는 못 잡는다.
+  const src = require('fs').readFileSync(require('path').join(__dirname, '../src/engine/rules.js'), 'utf-8');
+  const inRules = [...src.matchAll(/\{ id: '([A-Z0-9-]+)'/g)].map((m) => m[1]);
+  const inCatalog = Object.keys(require('../src/i18n/rules/en'));
+
+  const dupes = inRules.filter((v, i) => inRules.indexOf(v) !== i);
+  assert.deepStrictEqual(dupes, [], `중복된 메시지 id: ${dupes.join(', ')}`);
+
+  const missing = inRules.filter((v) => !inCatalog.includes(v));
+  assert.deepStrictEqual(missing, [], `카탈로그에 없는 id: ${missing.join(', ')}`);
+
+  const unused = inCatalog.filter((v) => !inRules.includes(v));
+  assert.deepStrictEqual(unused, [], `아무도 쓰지 않는 카탈로그 항목: ${unused.join(', ')}`);
+});
+
+test('카탈로그의 모든 항목이 원문과 같은 모양이다', () => {
+  // 규칙을 직접 돌리지 않고도 어긋남을 잡는다: 카탈로그가 함수/문자열 형태를 지키는지,
+  // 빈 문자열이 들어 있지 않은지 본다.
+  const catalog = require('../src/i18n/rules/en');
+  const ids = Object.keys(catalog);
+  assert.ok(ids.length >= 20, `카탈로그가 비었음 (${ids.length}개)`);
+  ids.forEach((id) => {
+    const e = catalog[id];
+    ['title', 'explanation'].forEach((k) => {
+      assert.ok(e[k], `${id}: ${k} 없음`);
+      const v = typeof e[k] === 'function' ? e[k]({}) : e[k];
+      assert.ok(typeof v === 'string' && v.trim(), `${id}: ${k}가 빈 문장`);
+    });
+    ['causes', 'actions'].forEach((k) => {
+      assert.ok(Array.isArray(e[k]) && e[k].length, `${id}: ${k}가 비었음`);
+      e[k].forEach((s) => assert.ok(typeof s === 'string' && s.trim(), `${id}: ${k}에 빈 항목`));
+    });
+    assert.ok(e.verification && String(e.verification).trim(), `${id}: 재검사 방법 없음`);
+    // 영어 카탈로그에 한글이 남아 있으면 안 된다(런타임 메시지 보간은 params라 여기 없다).
+    const flat = JSON.stringify([
+      typeof e.title === 'function' ? e.title({ errors: 0 }) : e.title,
+      typeof e.explanation === 'function' ? '' : e.explanation,
+      e.causes, e.actions, e.verification,
+    ]);
+    assert.ok(!/[가-힣]/.test(flat), `${id}: 영어 카탈로그에 한글이 있음`);
   });
 });
 
