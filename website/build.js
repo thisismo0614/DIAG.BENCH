@@ -491,6 +491,11 @@ function esc(s) {
   });
 
   // 정적 파일 복사 (public/ 안의 모든 것)
+  //
+  // ⚠ public/에는 검색엔진 소유권 확인 파일(google*.html, naver*.html)이 들어 있다.
+  //    내용이 한 줄뿐이라 쓸모없어 보이지만 **지우면 안 된다.** 사라지는 순간
+  //    Search Console에서 소유권이 풀리고 색인 요청·사이트맵 제출이 막힌다.
+  //    템플릿이 아니므로 사이트맵에는 들어가지 않는다(의도된 것이다).
   const pub = path.join(ROOT, 'public');
   if (fs.existsSync(pub)) {
     fs.cpSync(pub, OUT, { recursive: true });
