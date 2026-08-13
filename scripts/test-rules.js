@@ -11,7 +11,11 @@ const { analyzeMemoryConfig } = require('../src/engine/memoryConfig');
 const { analyzeConfiguration } = require('../src/engine/overclock');
 const { parsePingOutput } = require('../src/engine/collectors');
 const { PROFILES, resolveProfile, listProfiles } = require('../src/engine/profiles');
-const { listIssues, getIssue, wizardFor, RISK_ORDER } = require('../src/engine/issueDb');
+const {
+  listIssues, getIssue, wizardFor, RISK_ORDER,
+  riskLabels, translationStatus,
+} = require('../src/engine/issueDb');
+const { normalizeLocale, resolveLocale, SUPPORTED_LOCALES, SOURCE_LOCALE } = require('../src/i18n');
 const { versionInfo } = require('../src/engine/version');
 const { sanitize: sanitizeSettings, DEFAULTS: SETTINGS_DEFAULTS } = require('../src/engine/settings');
 const { compareSessions } = require('../src/engine/sessionCompare');
@@ -2545,6 +2549,165 @@ test('기준선 이슈도 Issue ID와 Wizard를 갖는다', () => {
 test('Issue ID는 중복되지 않는다', () => {
   const ids = listIssues().map((e) => e.id);
   assert.strictEqual(new Set(ids).size, ids.length);
+});
+
+// ============================================================
+section('다국어 (i18n) — 번역이 판정을 바꾸지 못하게 한다');
+// ============================================================
+// 여기가 무너지면 **영어 화면에서 위험한 조치에 "안전" 딱지가 붙는다.**
+// 조치 문장과 위험도는 인덱스로 짝지어지므로, 번역에서 항목 하나만 빠져도 전부 밀린다.
+
+test('언어 코드를 정규화한다 (en-US → en, 모르는 값은 null)', () => {
+  assert.strictEqual(normalizeLocale('en-US'), 'en');
+  assert.strictEqual(normalizeLocale('EN_us'), 'en');
+  assert.strictEqual(normalizeLocale('ko-KR'), 'ko');
+  // 모르는 값을 조용히 기본값으로 바꾸지 않는다 — 무시됐다는 것을 호출부가 알아야 한다.
+  assert.strictEqual(normalizeLocale('fr'), null);
+  assert.strictEqual(normalizeLocale(''), null);
+  assert.strictEqual(normalizeLocale(null), null);
+});
+
+test('사용자가 고른 언어가 시스템 언어보다 우선한다', () => {
+  // 한국어 Windows에서 영어로 쓰고 싶은 사람이 실제로 있다.
+  assert.strictEqual(resolveLocale('en', 'ko-KR'), 'en');
+  assert.strictEqual(resolveLocale(null, 'en-GB'), 'en');
+  assert.strictEqual(resolveLocale('fr', 'de-DE'), SOURCE_LOCALE, '둘 다 모르면 원문으로');
+});
+
+test('언어를 지정하지 않으면 예전과 똑같이 한국어가 나온다', () => {
+  // 회귀 방지: i18n 계층을 넣었다고 기존 호출부의 동작이 달라지면 안 된다.
+  const ko = getIssue('MEMORY-SINGLE-CHANNEL');
+  assert.strictEqual(ko.title, '메모리가 한 채널에만 꽂혀 있습니다');
+  assert.strictEqual(ko.locale, 'ko');
+});
+
+test('영어로 요청하면 영어가 나온다', () => {
+  const en = getIssue('MEMORY-SINGLE-CHANNEL', 'en');
+  assert.strictEqual(en.locale, 'en');
+  assert.ok(en.translated);
+  assert.ok(!/[가-힣]/.test(en.title), `영어 제목에 한글이 남아 있음: ${en.title}`);
+  assert.ok(!/[가-힣]/.test(en.verification));
+});
+
+test('[핵심] 번역은 위험도와 화면 이동 대상을 바꾸지 못한다', () => {
+  listIssues().forEach((ko) => {
+    const en = getIssue(ko.id, 'en');
+    assert.deepStrictEqual(
+      en.actions.map((a) => a.risk), ko.actions.map((a) => a.risk),
+      `${ko.id}: 영어판 조치의 위험도가 원문과 다름`,
+    );
+    assert.deepStrictEqual(
+      (en.wizard || []).map((s) => s.risk), (ko.wizard || []).map((s) => s.risk),
+      `${ko.id}: 영어판 단계의 위험도가 원문과 다름`,
+    );
+    assert.deepStrictEqual(
+      (en.wizard || []).map((s) => s.screen), (ko.wizard || []).map((s) => s.screen),
+      `${ko.id}: 영어판 단계의 화면 이동 대상이 원문과 다름`,
+    );
+    assert.strictEqual(en.version, ko.version, `${ko.id}: 버전이 번역으로 바뀜`);
+    assert.strictEqual(en.category, ko.category, `${ko.id}: 분류가 번역으로 바뀜`);
+  });
+});
+
+test('영어판에서도 안전한 조치가 먼저 온다', () => {
+  listIssues('en').forEach((e) => {
+    assert.strictEqual(e.actions[0].risk, 'SAFE', `${e.id}: 첫 조치가 SAFE가 아님`);
+  });
+});
+
+test('영어판 Wizard도 마지막 단계가 재검사다', () => {
+  // 한국어 테스트는 "재검사|재측정|확인"을 본다. 같은 원칙을 영어에도 적용한다.
+  listIssues('en').filter((e) => e.wizard && e.wizard.length).forEach((e) => {
+    const last = e.wizard[e.wizard.length - 1];
+    assert.ok(/re-?test|re-?record|re-?measure/i.test(last.title),
+      `${e.id}: 마지막 단계가 재검사가 아님 — ${last.title}`);
+  });
+});
+
+test('[핵심] 번역 모양이 어긋나면 그 항목만 통째로 원문으로 되돌린다', () => {
+  // 조치가 하나 빠진 번역을 억지로 만들어 본다. 절반만 적용되면 위험도가 밀린다.
+  const overlay = require('../src/i18n/issues/en');
+  const id = 'MEMORY-MIXED-DIMM-BELOW-RATED';
+  const saved = overlay[id].actions;
+  try {
+    overlay[id].actions = saved.slice(0, saved.length - 1);   // 하나 뺀다
+    const broken = getIssue(id, 'en');
+    assert.strictEqual(broken.translated, false, '어긋난 번역을 적용하면 안 됨');
+    assert.strictEqual(broken.locale, 'ko', '원문으로 떨어져야 함');
+    assert.strictEqual(broken.actions.length, saved.length, '조치 개수가 원문 그대로여야 함');
+    assert.ok(/[가-힣]/.test(broken.title), '원문(한국어)이 나와야 함');
+  } finally {
+    overlay[id].actions = saved;
+  }
+  // 되돌린 뒤 정상 동작을 확인한다(테스트가 다른 테스트를 오염시키지 않게).
+  assert.strictEqual(getIssue(id, 'en').translated, true);
+});
+
+test('빈 문자열로 번역해도 번역된 것으로 치지 않는다', () => {
+  const overlay = require('../src/i18n/issues/en');
+  const id = 'MEMORY-SINGLE-CHANNEL';
+  const saved = overlay[id].title;
+  try {
+    overlay[id].title = '   ';
+    assert.strictEqual(getIssue(id, 'en').translated, false, '공백은 번역이 아님');
+  } finally {
+    overlay[id].title = saved;
+  }
+});
+
+test('지원하지 않는 언어는 원문으로 떨어진다', () => {
+  const fr = getIssue('MEMORY-SINGLE-CHANNEL', 'fr');
+  assert.strictEqual(fr.locale, 'ko');
+  assert.strictEqual(fr.translated, false, '번역되지 않았다는 사실이 드러나야 함');
+});
+
+test('위험도 라벨이 언어를 따라간다', () => {
+  assert.ok(/[가-힣]/.test(riskLabels('ko').INTERMEDIATE));
+  assert.ok(!/[가-힣]/.test(riskLabels('en').INTERMEDIATE));
+  // 모든 위험도에 라벨이 있어야 한다. 하나라도 비면 화면에 빈칸이 나간다.
+  RISK_ORDER.forEach((r) => {
+    SUPPORTED_LOCALES.forEach((loc) => {
+      assert.ok(riskLabels(loc)[r], `${loc}: ${r} 라벨 없음`);
+    });
+  });
+});
+
+test('Wizard 경고문도 언어를 따라간다', () => {
+  const ko = wizardFor('MEMORY-MIXED-DIMM-BELOW-RATED');
+  const en = wizardFor('MEMORY-MIXED-DIMM-BELOW-RATED', 'en');
+  assert.ok(ko.warning.includes('CMOS'));
+  assert.ok(en.warning.includes('CMOS'), '복구 방법은 어느 언어에서도 빠지면 안 됨');
+  assert.ok(!/[가-힣]/.test(en.warning), `영어 경고문에 한글이 남아 있음: ${en.warning}`);
+  assert.strictEqual(en.highestRisk, ko.highestRisk, '위험도 판정은 언어와 무관해야 함');
+});
+
+test('언어 파일들의 키 구조가 같다', () => {
+  // 한쪽에만 있는 키는 그 언어에서 빈 화면이 된다.
+  const ko = require('../src/i18n/strings/ko');
+  const en = require('../src/i18n/strings/en');
+  assert.deepStrictEqual(Object.keys(en.risk).sort(), Object.keys(ko.risk).sort());
+  assert.deepStrictEqual(Object.keys(en).sort(), Object.keys(ko).sort());
+});
+
+test('영어 번역 현황을 사실대로 센다', () => {
+  const st = translationStatus('en');
+  assert.strictEqual(st.total, listIssues().length);
+  assert.ok(st.complete, `영어 번역 누락: ${st.missing.join(', ')}`);
+  // 원문 언어는 언제나 완료 상태다.
+  assert.ok(translationStatus('ko').complete);
+  // 없는 언어는 0건이라고 정직하게 답한다.
+  assert.strictEqual(translationStatus('fr').translated, 0);
+});
+
+test('영어 번역문에 한글이 섞여 있지 않다', () => {
+  listIssues('en').forEach((e) => {
+    const texts = [e.title, e.detection, e.verification, ...e.symptoms, ...e.causes,
+      ...e.actions.map((a) => a.text),
+      ...(e.wizard || []).flatMap((s) => [s.title, s.detail])];
+    texts.forEach((t) => {
+      assert.ok(!/[가-힣]/.test(t), `${e.id}: 영어판에 한글이 남아 있음 — ${t}`);
+    });
+  });
 });
 
 // ============================================================

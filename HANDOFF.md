@@ -120,6 +120,10 @@ diag-bench-desktop/
       baselineStore.js          기준선 저장(userData의 baseline.json) — 시간으로는 만료시키지 않음
       vramChecks.js             VRAM 검사 결과 저장 — latestCheckStore 사용
       gpuStressChecks.js        GPU 부하 테스트 결과 저장 — latestCheckStore 사용
+    i18n/
+      index.js                  지원 언어 목록, 언어 코드 정규화·결정 (앱과 웹사이트 빌드가 공유)
+      strings/ko.js, en.js      위험도 라벨·Wizard 경고 등 고정 문구. ko가 원본, 키 구조는 동일
+      issues/en.js              issueDb의 **문장만** 담은 번역 오버레이 (위험도·화면이동은 담지 않는다)
     renderer/
       index.html / styles.css / app.js   전체 UI(대시보드/기록/점검리포트/안정성/실시간모니터링/디스플레이/마우스/키보드/네트워크)
   scripts/
@@ -497,6 +501,32 @@ git tag vX.Y.Z  →  release.yml
   차이라 임계값 판정이 불가능하다. I/O 실패·데이터 불일치처럼 장치 종류와 무관한 것만 이슈로 올린다.
 - **새 시나리오를 만들면 `scripts/fixtures.js`에 추가한다.** "이 상태면 이 등급"을 고정해두는
   파일이고, 회귀가 조용히 통과하는 걸 막는 유일한 장치다.
+
+---
+
+## 5-2. 다국어 구조 (번역이 판정을 바꾸지 못하게 하는 장치)
+
+번역에서 이 프로젝트에 가장 위험한 실패는 오역이 아니라 **"위험한 조치에 안전 딱지가
+붙는 것"** 이다. 조치 문장과 위험도는 **인덱스로** 짝지어지므로, 번역에서 항목 하나만
+빠지면 그 뒤의 모든 조치에 한 칸씩 밀린 위험도가 붙는다.
+
+- **번역 파일에는 문장만 담는다.** 위험도(`risk`), 화면 이동 대상(`screen`), 분류, 버전은
+  `issueDb.js`(원문 구조)에만 있다. `src/i18n/issues/en.js`에는 그 값들이 아예 없다 —
+  담을 수 없으면 바꿀 수도 없다.
+- **모양이 어긋난 번역은 절반만 적용하지 않는다.** `overlayMatches()`가 배열 길이와 빈
+  문자열을 검사하고, 하나라도 어긋나면 **그 항목만 통째로 원문(한국어)으로 되돌린다.**
+  한국어로 보이되 정확한 편이, 영어로 보이되 위험도가 밀린 것보다 낫다.
+- **번역이 없으면 없다고 말한다.** 모든 조회 결과에 `locale`(실제 적용된 언어)과
+  `translated`가 붙는다. 조용히 한국어를 내보내면 읽는 사람은 화면이 고장 난 줄 안다.
+  `translationStatus(locale)`이 "N개 중 M개 번역됨"을 사실대로 센다.
+- **모르는 언어 코드를 조용히 기본값으로 바꾸지 않는다.** `normalizeLocale()`은 null을
+  돌려주고, 판단은 호출부(`resolveLocale`)가 한다.
+- 기존 호출부는 그대로다. `getIssue(id)` / `listIssues()` / `wizardFor(id)`는 언어를
+  생략하면 예전과 똑같이 한국어를 준다. 이걸 회귀 테스트가 지킨다.
+
+⚠ **아직 번역되지 않은 것**: 앱 UI(`src/renderer`), 규칙 엔진의 판정 문구(`rules.js`,
+번역 대상 중 가장 큰 12,068자), 점검 리포트, 웹사이트 템플릿과 `website/content/guide-seo.js`
+(가이드 페이지의 제목·설명은 issueDb가 아니라 이 파일에서 온다 — 함께 번역해야 한다), `docs/`.
 
 ---
 

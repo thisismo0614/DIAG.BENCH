@@ -20,6 +20,8 @@
 //   3. 모든 조치에 위험도를 단다. 위험도가 없는 조치는 사용자가 판단할 근거가 없다.
 //   4. 확인만 하는 안전한 조치(SAFE)를 항상 먼저 놓는다. 되돌리기 어려운 것은 뒤로.
 
+const { SOURCE_LOCALE } = require('../i18n');
+
 const DB_VERSION = '2026.08.1';
 
 // 조치·단계의 위험도 (기획서 §14)
@@ -31,13 +33,28 @@ const RISK = {
   EXPERT: 'EXPERT',             // BIOS 플래시 등 실패 시 복구가 어렵다.
 };
 
-const RISK_LABEL = {
-  SAFE: '안전 — 확인만 합니다',
-  LOW: '낮음 — 되돌리기 쉽습니다',
-  INTERMEDIATE: '중간 — BIOS 설정을 바꿉니다',
-  ADVANCED: '높음 — 전압/클럭을 직접 조정합니다',
-  EXPERT: '매우 높음 — 실패 시 복구가 어렵습니다',
+// 언어별 고정 문구. 위험도 라벨과 Wizard 경고문은 여기서 온다.
+// (문구는 언어 파일에, 위험도 값 자체는 이 파일에 — 번역이 위험도를 바꿀 수 없어야 한다)
+const STRINGS = {
+  ko: require('../i18n/strings/ko'),
+  en: require('../i18n/strings/en'),
 };
+
+// 문제 해결 지식의 번역 오버레이. 없는 언어는 원문(한국어)으로 떨어진다.
+const ISSUE_OVERLAYS = {
+  en: require('../i18n/issues/en'),
+};
+
+function strings(locale) {
+  return STRINGS[locale] || STRINGS[SOURCE_LOCALE];
+}
+
+// 기존 호출부와 테스트가 그대로 쓰는 한국어 라벨. 언어별로 쓰려면 riskLabels(locale).
+const RISK_LABEL = STRINGS[SOURCE_LOCALE].risk;
+
+function riskLabels(locale) {
+  return strings(locale).risk;
+}
 
 // 이 위험도부터는 되돌릴 방법을 먼저 마련하라고 안내한다 (기획서 §45).
 const RISK_NEEDS_BACKUP = [RISK.INTERMEDIATE, RISK.ADVANCED, RISK.EXPERT];
@@ -293,14 +310,70 @@ const ENTRIES = {
   },
 };
 
-function getIssue(id) {
-  return ENTRIES[id] || null;
+// 번역 오버레이가 원문과 **같은 모양**인지 검사한다.
+//
+// 이게 왜 필요한가: actions와 wizard는 번역문(문장)과 원문(위험도)을 **인덱스로** 짝짓는다.
+// 번역에서 항목 하나가 빠지면 그 뒤의 모든 조치에 한 칸씩 밀린 위험도가 붙는다.
+// "안전 — 확인만 합니다"라고 적힌 조치가 실제로는 BIOS를 바꾸는 조치가 되는 것이다.
+//
+// 그래서 모양이 어긋나면 **그 항목만 통째로 원문으로 되돌린다.** 절반만 번역된 화면이
+// 잘못된 위험도를 보여주는 것보다, 한국어로 보이되 정확한 편이 낫다.
+function overlayMatches(base, tr) {
+  if (!tr) return false;
+  const sameLen = (a, b) => Array.isArray(a) && Array.isArray(b) && a.length === b.length;
+  if (!sameLen(base.symptoms, tr.symptoms)) return false;
+  if (!sameLen(base.causes, tr.causes)) return false;
+  if (!sameLen(base.actions, tr.actions)) return false;
+  if ((base.wizard || []).length !== (tr.wizard || []).length) return false;
+
+  const filled = (s) => typeof s === 'string' && s.trim().length > 0;
+  if (![tr.title, tr.detection, tr.verification].every(filled)) return false;
+  if (!tr.symptoms.every(filled) || !tr.causes.every(filled) || !tr.actions.every(filled)) return false;
+  return (tr.wizard || []).every((s) => s && filled(s.title) && filled(s.detail));
+}
+
+/**
+ * 항목 하나를 요청한 언어로 꺼낸다.
+ *
+ * 돌려주는 객체에는 `locale`(실제로 적용된 언어)과 `translated`가 붙는다.
+ * 번역이 없어서 한국어가 나갔다는 사실을 호출부가 알아야 화면에 그렇게 밝힐 수 있다 —
+ * 조용히 한국어를 내보내면 읽는 사람은 화면이 고장 난 줄 안다.
+ */
+function localizedEntry(id, locale = SOURCE_LOCALE) {
+  const base = ENTRIES[id];
+  if (!base) return null;
+
+  const overlay = (ISSUE_OVERLAYS[locale] || {})[id];
+  if (locale === SOURCE_LOCALE || !overlayMatches(base, overlay)) {
+    return { ...base, locale: SOURCE_LOCALE, translated: locale === SOURCE_LOCALE };
+  }
+
+  return {
+    ...base,
+    title: overlay.title,
+    detection: overlay.detection,
+    symptoms: overlay.symptoms,
+    causes: overlay.causes,
+    // ⚠ risk는 **원문에서** 가져온다. 번역 파일이 위험도를 바꿀 수 있으면 안 된다.
+    actions: base.actions.map((a, i) => ({ text: overlay.actions[i], risk: a.risk })),
+    verification: overlay.verification,
+    // screen(화면 이동 대상)도 원문 값을 유지한다. 번역은 문장만 바꾼다.
+    wizard: (base.wizard || []).map((s, i) => ({
+      ...s, title: overlay.wizard[i].title, detail: overlay.wizard[i].detail,
+    })),
+    locale,
+    translated: true,
+  };
+}
+
+function getIssue(id, locale = SOURCE_LOCALE) {
+  return localizedEntry(id, locale);
 }
 
 // 이슈에 붙일 지식(원인·조치·재검사·Wizard)을 꺼낸다.
 // 규칙 모듈은 여기서 받은 값을 그대로 쓰고, 측정값이 들어가는 문장만 직접 만든다.
-function knowledge(id) {
-  const e = ENTRIES[id];
+function knowledge(id, locale = SOURCE_LOCALE) {
+  const e = localizedEntry(id, locale);
   if (!e) return null;
   return {
     id,
@@ -313,24 +386,29 @@ function knowledge(id) {
     symptoms: e.symptoms,
     detection: e.detection,
     wizard: e.wizard || [],
+    locale: e.locale,
+    translated: e.translated,
   };
 }
 
 // Wizard에 안전 안내를 붙인다 (기획서 §45).
 // 되돌리기 어려운 단계가 있으면, 시작 전에 현재 설정을 남기라고 먼저 알린다.
-function wizardFor(id) {
-  const e = ENTRIES[id];
+function wizardFor(id, locale = SOURCE_LOCALE) {
+  const e = localizedEntry(id, locale);
   if (!e || !e.wizard || !e.wizard.length) return null;
+  const labels = riskLabels(e.locale);
   const highest = e.wizard.reduce((max, s) => (riskRank(s.risk) > riskRank(max) ? s.risk : max), RISK.SAFE);
   return {
     issueId: id,
     title: e.title,
-    steps: e.wizard.map((s, i) => ({ ...s, index: i + 1, riskLabel: RISK_LABEL[s.risk] })),
+    steps: e.wizard.map((s, i) => ({ ...s, index: i + 1, riskLabel: labels[s.risk] })),
     highestRisk: highest,
-    highestRiskLabel: RISK_LABEL[highest],
-    warning: RISK_NEEDS_BACKUP.includes(highest)
-      ? '이 절차에는 되돌리기 어려운 단계가 있습니다. 시작하기 전에 현재 설정을 사진이나 메모로 남겨두세요. BIOS 설정을 잘못 바꾸면 부팅이 되지 않을 수 있으며, 그때는 CMOS 클리어로 복구합니다.'
-      : null,
+    highestRiskLabel: labels[highest],
+    // ⚠ 경고문은 **실제로 적용된 언어**(e.locale)로 낸다. 번역이 없어 한국어 안내가
+    //    나가는데 경고만 영어면, 되돌리기 어려운 단계를 앞두고 말이 갈린다.
+    warning: RISK_NEEDS_BACKUP.includes(highest) ? strings(e.locale).wizardBackupWarning : null,
+    locale: e.locale,
+    translated: e.translated,
   };
 }
 
@@ -340,11 +418,30 @@ function riskRank(r) {
   return i === -1 ? 0 : i;
 }
 
-function listIssues() {
-  return Object.keys(ENTRIES).map((id) => ({ id, ...ENTRIES[id] }));
+function listIssues(locale = SOURCE_LOCALE) {
+  return Object.keys(ENTRIES).map((id) => ({ id, ...localizedEntry(id, locale) }));
+}
+
+/**
+ * 언어별 번역 현황. "몇 개 중 몇 개가 번역됐는가"를 사실대로 센다.
+ *
+ * 사이트와 앱이 이 값을 보고 "이 언어는 일부만 번역됐습니다"라고 밝힐 수 있다.
+ * 번역률을 모르면 "영어판 있음"이라고 광고해놓고 한국어 화면을 보여주게 된다.
+ */
+function translationStatus(locale) {
+  const ids = Object.keys(ENTRIES);
+  const translated = ids.filter((id) => localizedEntry(id, locale).translated);
+  return {
+    locale,
+    total: ids.length,
+    translated: translated.length,
+    missing: ids.filter((id) => !translated.includes(id)),
+    complete: translated.length === ids.length,
+  };
 }
 
 module.exports = {
   ENTRIES, DB_VERSION, RISK, RISK_LABEL, RISK_ORDER, RISK_NEEDS_BACKUP,
   getIssue, knowledge, wizardFor, listIssues, riskRank,
+  localizedEntry, riskLabels, translationStatus,
 };
