@@ -107,6 +107,8 @@ function buildVerificationPayload({ issuedAt, hardwareIdentity, diagnosisReport,
     profile: diagnosisReport.profile || null,
     // 버전도 해시에 넣는다(§59). 어느 규칙으로 낸 판정인지가 바뀌면 다른 문서다.
     versions: diagnosisReport.versions || null,
+    // 고객·장비·담당자 기록. 판정은 아니지만 문서의 일부이므로 바꿔치기를 막는다.
+    notes: extraChecks && extraChecks.notes ? extraChecks.notes : null,
   });
 }
 
@@ -133,6 +135,9 @@ function thermalStatus(sectionsByCat) {
   return 'normal';
 }
 
+// notes(고객·장비·담당자·메모)는 사람이 적는 자유 입력이라 **판정에 관여하지 않는다.**
+// 다만 문서에는 실리고 해시에도 들어간다 — "누구 것을 언제 누가 검사했다"는 기록 자체가
+// 이 문서의 일부이고, 나중에 바꿔치기할 수 있으면 안 되기 때문이다.
 function buildInspectionReport(diagnosisReport, hardwareIdentity, timestamp, deepTests, extraChecks) {
   const issuedAt = timestamp || new Date().toISOString();
   const validUntil = new Date(new Date(issuedAt).getTime() + VALIDITY_DAYS * 24 * 60 * 60 * 1000).toISOString();
@@ -144,6 +149,7 @@ function buildInspectionReport(diagnosisReport, hardwareIdentity, timestamp, dee
   // SMART 상세 속성은 리포트 본문에 원본 수치로 싣는다(중고 거래에서 가장 값어치 있는 정보).
   // 저장된 리포트를 나중에 다시 렌더링할 때도 같은 표가 나와야 하므로 리포트 안에 보관한다.
   const smartDetails = (extraChecks && extraChecks.smartDetails) || null;
+  const notes = (extraChecks && extraChecks.notes) || null;
 
   const hasIdentity = !!(hardwareIdentity.systemSerial || hardwareIdentity.systemUuid || hardwareIdentity.baseboardSerial
     || hardwareIdentity.gpuUuid || (hardwareIdentity.disks || []).some((d) => d.serial));
@@ -292,7 +298,7 @@ function buildInspectionReport(diagnosisReport, hardwareIdentity, timestamp, dee
   // 등급과 검사 범위까지 확정된 뒤에 계산한다 — 리포트가 실제로 주장하는 내용 전부를 덮기 위해서.
   const verificationPayload = buildVerificationPayload({
     issuedAt, hardwareIdentity, diagnosisReport, deepTests,
-    extraChecks: { vramCheck, gpuStressCheck, smartDetails },
+    extraChecks: { vramCheck, gpuStressCheck, smartDetails, notes },
     testScope: { completed, notTested }, categoryScores, overallGrade,
   });
   const verificationHash = hashPayload(verificationPayload);
@@ -311,6 +317,8 @@ function buildInspectionReport(diagnosisReport, hardwareIdentity, timestamp, dee
     // 어느 버전이 어떤 규칙으로 낸 판정인지 (§59). 나중에 규칙이 바뀌어도
     // 이 문서의 결과를 설명할 수 있어야 한다.
     versions: diagnosisReport.versions || null,
+    // 고객·장비·담당자 기록(있을 때만). 판정과 무관한 업무 정보다.
+    notes,
     gradeExplanation,
     issuedAt,
     validUntil,
@@ -344,6 +352,8 @@ function verifyInspectionReport(inspectionReport) {
       vramCheck: inspectionReport.vramCheck || null,
       gpuStressCheck: inspectionReport.gpuStressCheck || null,
       smartDetails: inspectionReport.smartDetails || null,
+      // 검증할 때도 같은 값을 넣어야 한다. 빠뜨리면 고객명을 바꿔치기해도 통과한다.
+      notes: inspectionReport.notes || null,
     },
     testScope: inspectionReport.testScope,
     categoryScores: inspectionReport.categoryScores,

@@ -26,6 +26,8 @@ contextBridge.exposeInMainWorld('diagAPI', {
   runProfile: (opts) => ipcRenderer.invoke('run-profile', opts),
 
   getSessions: () => ipcRenderer.invoke('get-sessions'),
+  updateSessionNotes: (payload) => ipcRenderer.invoke('update-session-notes', payload),
+  getNoteLimits: () => ipcRenderer.invoke('get-note-limits'),
   clearSessions: () => ipcRenderer.invoke('clear-sessions'),
   compareSessions: (payload) => ipcRenderer.invoke('compare-sessions', payload),
 

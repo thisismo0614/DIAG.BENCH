@@ -98,7 +98,27 @@ function scopeKeyOf(profile) {
   return crypto.createHash('sha256').update(payload).digest('hex').slice(0, 16);
 }
 
-function appendSession(userDataDir, { report, raw, hardwareIdentity, inspectionReport, profile }) {
+// 업무용 메모. 수리점·업체는 하루에 여러 대를 보므로 "이 세션이 누구 PC인지"를
+// 적어둘 수 없으면 기록이 쌓여도 쓸 수가 없다.
+//
+// ⚠ 이 값들은 **판정에 전혀 관여하지 않는다.** 사람이 적는 자유 입력이라 진단 근거로
+//   쓰면 안 된다. 다만 점검 리포트에는 실리고 검증 해시에도 들어간다 —
+//   "누구 것을 언제 누가 검사했다"는 기록 자체가 문서의 일부이기 때문이다.
+const NOTE_LIMITS = { customer: 60, device: 60, technician: 40, memo: 500 };
+
+function sanitizeNotes(input) {
+  if (!input || typeof input !== 'object') return null;
+  const out = {};
+  Object.entries(NOTE_LIMITS).forEach(([key, max]) => {
+    const v = input[key];
+    if (typeof v !== 'string') return;
+    const trimmed = v.trim().slice(0, max);
+    if (trimmed) out[key] = trimmed;
+  });
+  return Object.keys(out).length ? out : null;
+}
+
+function appendSession(userDataDir, { report, raw, hardwareIdentity, inspectionReport, profile, notes }) {
   const hardware = extractHardware(raw, hardwareIdentity);
   const entry = {
     id: crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex'),
@@ -107,6 +127,7 @@ function appendSession(userDataDir, { report, raw, hardwareIdentity, inspectionR
     profileLabel: profile ? profile.label : null,
     sessionRole: profile ? (profile.sessionRole || null) : null,
     scopeKey: scopeKeyOf(profile),
+    notes: sanitizeNotes(notes),
     reportId: inspectionReport ? inspectionReport.reportId : null,
     grade: inspectionReport ? inspectionReport.overallGrade.letter : null,
     // 비교의 전제 — 이게 없으면 성격이 다른 값을 나란히 놓게 된다.
@@ -125,15 +146,29 @@ function appendSession(userDataDir, { report, raw, hardwareIdentity, inspectionR
 
 // 짝이 되는 이전 세션을 찾는다(예: 출고 검사 → 같은 PC의 가장 최근 입고 검사).
 // 하드웨어 열쇠가 다르면 다른 PC이므로 짝으로 삼지 않는다.
-function findPairSession(userDataDir, { hardwareKey, role, beforeId } = {}) {
+//
+// customer가 주어지면 같은 고객의 기록만 본다. 같은 모델 PC를 여러 대 다루는
+// 수리점에서 하드웨어 지문만으로는 구별되지 않는 경우가 있기 때문이다.
+function findPairSession(userDataDir, { hardwareKey, role, beforeId, customer } = {}) {
   const list = loadSessions(userDataDir);
   const candidates = list.filter((s) => {
     if (beforeId && s.id === beforeId) return false;
     if (role && s.sessionRole !== role) return false;
     if (hardwareKey && s.hardwareKey && s.hardwareKey !== hardwareKey) return false;
+    if (customer && s.notes && s.notes.customer && s.notes.customer !== customer) return false;
     return true;
   });
   return candidates.length ? candidates[candidates.length - 1] : null;
+}
+
+// 세션에 메모를 나중에 붙이거나 고친다. 검사 중에는 정신없어서 나중에 적는 일이 흔하다.
+function updateSessionNotes(userDataDir, sessionId, notes) {
+  const list = loadSessions(userDataDir);
+  const idx = list.findIndex((s) => s.id === sessionId);
+  if (idx < 0) return null;
+  list[idx] = { ...list[idx], notes: sanitizeNotes(notes) };
+  fs.writeFileSync(filePath(userDataDir), JSON.stringify(list, null, 2), 'utf-8');
+  return list[idx];
 }
 
 function clearSessions(userDataDir) {
@@ -142,6 +177,6 @@ function clearSessions(userDataDir) {
 }
 
 module.exports = {
-  loadSessions, appendSession, findPairSession, clearSessions,
-  extractMetrics, extractHardware, hardwareKeyOf, scopeKeyOf, filePath,
+  loadSessions, appendSession, findPairSession, clearSessions, updateSessionNotes,
+  extractMetrics, extractHardware, hardwareKeyOf, scopeKeyOf, sanitizeNotes, NOTE_LIMITS, filePath,
 };

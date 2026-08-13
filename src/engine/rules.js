@@ -688,8 +688,17 @@ function smartAttributeFindings(smartEntry) {
   if (has(a.unsafeShutdowns)) ctx.push(`비정상 전원 차단 ${a.unsafeShutdowns.toLocaleString()}회(절전 전환 포함일 수 있음)`);
   if (ctx.length) evidence.push(`${label} — ${ctx.join(' · ')}`);
 
+  // ⚠ 표에 있었는데 우리가 해석하지 못한 줄이 있으면 반드시 밝힌다.
+  //   그 줄에 대기 중 섹터 같은 고장 신호가 들어 있었을 수 있다. 조용히 빠뜨리고
+  //   "속성 정상"이라고 말하면, 정작 고장난 디스크를 정상이라고 하게 된다.
+  const unparsed = a.unparsedRowCount || 0;
+  if (unparsed > 0) {
+    evidence.push(`${label}: SMART 속성 표에서 ${unparsed}줄을 해석하지 못했습니다 — 확인되지 않은 속성이 있습니다`);
+  }
+
   // 문제 신호가 하나도 없을 때만 "속성도 정상"이라고 말한다.
-  if (!issues.length) {
+  // 해석 못 한 줄이 있으면 "정상"이라고 단정하지 않는다.
+  if (!issues.length && unparsed === 0) {
     const checked = [];
     if (has(a.pendingSectors)) checked.push('대기 중 섹터 0');
     if (has(a.reallocatedSectors)) checked.push('재할당 섹터 0');

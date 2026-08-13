@@ -6,6 +6,18 @@
      보인다 — 화면 설정에 따라 같은 PC가 다른 상태로 보이면 안 되기 때문이다. */
 body[data-view-mode="basic"] .expert-only{ display:none !important; }
 
+/* 업무용 메모 입력. 판정과 무관한 기록이므로 조용한 모양으로 둔다. */
+.notes-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}
+@media (max-width:820px){.notes-grid{grid-template-columns:1fr;}}
+#job-notes label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--ink-soft);}
+#job-notes input,#job-notes textarea{
+  font-family:var(--font-body);font-size:13px;color:var(--ink);
+  background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:7px 10px;width:100%;
+}
+#job-notes textarea{resize:vertical;line-height:1.5;}
+#job-notes input:focus,#job-notes textarea:focus{outline:2px solid var(--accent);outline-offset:0;border-color:var(--accent);}
+.notes-memo{margin-top:10px;}
+
 /* 첫 화면 아래의 "다음에 할 일". 해당 항목이 없으면 표시되지 않는다(장식이 아니다). */
 .next-steps{
   display:grid;grid-template-columns:1fr 1fr;gap:12px;

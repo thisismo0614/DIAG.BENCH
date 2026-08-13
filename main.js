@@ -372,6 +372,9 @@ ipcMain.handle('list-profiles', () => listProfiles());
 // 검사 세션 이력과 임의의 두 세션 비교 (기획서 §16~17, §30~31, §47)
 ipcMain.handle('get-sessions', () => sessions.loadSessions(app.getPath('userData')));
 ipcMain.handle('clear-sessions', () => { sessions.clearSessions(app.getPath('userData')); return true; });
+ipcMain.handle('update-session-notes', (event, { sessionId, notes } = {}) =>
+  sessions.updateSessionNotes(app.getPath('userData'), sessionId, notes));
+ipcMain.handle('get-note-limits', () => sessions.NOTE_LIMITS);
 ipcMain.handle('compare-sessions', (event, { beforeId, afterId } = {}) => {
   const list = sessions.loadSessions(app.getPath('userData'));
   const before = list.find((s) => s.id === beforeId);
@@ -379,8 +382,10 @@ ipcMain.handle('compare-sessions', (event, { beforeId, afterId } = {}) => {
   return compareSessions(before, after);
 });
 
-ipcMain.handle('run-profile', async (event, { profileId } = {}) => {
+ipcMain.handle('run-profile', async (event, { profileId, notes } = {}) => {
   const p = resolveProfile(profileId);
+  // 고객·장비 메모는 렌더러에서 오는 자유 입력이라 길이·형식을 여기서 다시 접는다.
+  const safeNotes = sessions.sanitizeNotes(notes);
   const send = (stage) => event.sender.send('diagnostic-progress', stage);
   const c = p.collect;
 
@@ -456,11 +461,11 @@ ipcMain.handle('run-profile', async (event, { profileId } = {}) => {
   if (p.report === 'inspection') {
     const issuedAt = new Date().toISOString();
     const inspectionReport = buildInspectionReport(report, hardwareIdentity || {}, issuedAt, deepTests,
-      { vramCheck, gpuStressCheck, smartDetails: storage.smart });
+      { vramCheck, gpuStressCheck, smartDetails: storage.smart, notes: safeNotes });
 
     // 세션으로 남긴다 — 전후 비교(§16~17)와 거래 전후 대조(§31)의 근거가 된다.
     const session = sessions.appendSession(app.getPath('userData'), {
-      report, raw, hardwareIdentity, inspectionReport, profile: p,
+      report, raw, hardwareIdentity, inspectionReport, profile: p, notes: safeNotes,
     });
 
     // 출고 검사라면 같은 PC의 가장 최근 입고 검사와 비교한다.
@@ -471,6 +476,9 @@ ipcMain.handle('run-profile', async (event, { profileId } = {}) => {
         hardwareKey: session.hardwareKey,
         role: PROFILES[p.requiresPair] ? PROFILES[p.requiresPair].sessionRole : 'intake',
         beforeId: session.id,
+        // 고객명을 적었다면 같은 고객의 입고 기록만 짝으로 삼는다.
+        // 같은 모델 PC를 여러 대 다루는 수리점에서 하드웨어 지문만으로는 구별이 안 된다.
+        customer: safeNotes && safeNotes.customer ? safeNotes.customer : null,
       });
       beforeAfter = pair
         ? compareSessions(pair, session)

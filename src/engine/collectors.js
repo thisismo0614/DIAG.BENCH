@@ -219,15 +219,27 @@ function parseAtaSmart(out) {
 
   const attrs = { kind: 'ata' };
   const rows = [];
+  // ⚠ 해석하지 못한 줄을 세어둔다. 표에 있는데 우리가 못 읽은 속성이 있으면
+  //   "속성 전부를 확인했다"고 말할 수 없다. 조용히 빠뜨리면 정작 고장 신호(대기 중 섹터 등)를
+  //   놓치고도 "이상 없음"이라고 하게 된다. 이 값은 진단 근거에 그대로 실린다.
+  const unparsed = [];
   for (let i = headerIdx + 1; i < lines.length; i++) {
     const line = lines[i];
     if (!line.trim()) break;                    // 표는 빈 줄에서 끝난다
     // 예: "197 Current_Pending_Sector  0x0012   100   100   000    Old_age   Always       -       8"
-    const m = line.match(/^\s*(\d+)\s+(\S+)\s+(\S+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.+?)\s*$/);
-    if (!m) continue;
+    //
+    // VALUE/WORST/THRESH가 항상 숫자인 것은 아니다. 일부 장치·smartmontools 버전은
+    // 임계값이 없을 때 "---"를 찍는다. 숫자만 받으면 그 줄이 통째로 버려지므로
+    // 숫자 아닌 값도 받아들이고 값만 null로 둔다.
+    const m = line.match(/^\s*(\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.+?)\s*$/);
+    if (!m) {
+      unparsed.push(line.trim());
+      continue;
+    }
+    const num = (v) => (/^\d+$/.test(v) ? Number(v) : null);
     const id = Number(m[1]);
     const row = {
-      id, name: m[2], value: Number(m[4]), worst: Number(m[5]), threshold: Number(m[6]),
+      id, name: m[2], value: num(m[4]), worst: num(m[5]), threshold: num(m[6]),
       type: m[7], whenFailed: m[9], raw: m[10].trim(),
     };
     rows.push(row);
@@ -236,6 +248,8 @@ function parseAtaSmart(out) {
     if (key) attrs[key] = smartNum(row.raw);
   }
   if (!rows.length) return null;
+  attrs.unparsedRowCount = unparsed.length;
+  attrs.unparsedRows = unparsed.slice(0, 3); // 진단이 아니라 원인 파악용이라 몇 줄만 남긴다
 
   attrs.rows = rows;
   // prefail 속성이 임계값 이하로 떨어졌는지 = 제조사 기준 "고장 임박" 신호

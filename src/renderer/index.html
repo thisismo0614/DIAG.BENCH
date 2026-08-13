@@ -133,6 +133,19 @@
       <h1 class="title">목적별 검사</h1>
       <p class="desc">무엇을 위해 검사하는지에 따라 확인할 항목과 깊이가 다릅니다. <b>건너뛴 검사는 "정상"이 아니라 "검사 안 함"으로 표시</b>되며, 그 사실이 결과와 리포트에 그대로 남습니다.</p>
 
+      <!-- 업무용 메모. 리포트를 발급하는 프로필에서만 의미가 있으므로 그때만 보인다.
+           판정에는 전혀 관여하지 않고, 문서에 실리고 검증 해시에 포함된다. -->
+      <div class="device-panel" id="job-notes">
+        <div class="device-panel-title" style="margin-bottom:6px;">고객 · 장비 기록 <span style="font-weight:400;color:var(--ink-faint);font-size:12px;">(선택)</span></div>
+        <p class="mini-desc" style="margin-bottom:12px;">리포트를 발급하는 검사에만 함께 기록됩니다. 진단 결과에는 영향을 주지 않습니다. 여러 대를 다룰 때 어느 기록이 누구 것인지 구분하는 용도입니다.</p>
+        <div class="notes-grid">
+          <label>고객<input type="text" id="note-customer" maxlength="60" placeholder="예: 김OO / OO상사"></label>
+          <label>장비<input type="text" id="note-device" maxlength="60" placeholder="예: 접수번호 2026-0813-01"></label>
+          <label>담당자<input type="text" id="note-technician" maxlength="40" placeholder="예: 박기사"></label>
+        </div>
+        <label class="notes-memo">메모<textarea id="note-memo" maxlength="500" rows="2" placeholder="예: 부팅 중 재부팅 반복 증상으로 입고"></textarea></label>
+      </div>
+
       <div id="profile-list"></div>
 
       <div id="profile-progress" class="device-panel" style="display:none;">

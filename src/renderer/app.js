@@ -536,6 +536,16 @@ function renderProfileSections(report) {
   </div>`;
 }
 
+// 업무용 메모를 읽어온다. 비어 있으면 아무것도 넘기지 않는다.
+function readJobNotes() {
+  const get = (id) => (document.getElementById(id)?.value || '').trim();
+  const notes = {
+    customer: get('note-customer'), device: get('note-device'),
+    technician: get('note-technician'), memo: get('note-memo'),
+  };
+  return Object.values(notes).some(Boolean) ? notes : null;
+}
+
 async function runProfileScan(profileId, meta, btn) {
   const progress = document.getElementById('profile-progress');
   const resultEl = document.getElementById('profile-result');
@@ -545,7 +555,7 @@ async function runProfileScan(profileId, meta, btn) {
   document.getElementById('profile-progress-title').textContent = `${meta.label} 진행 중 (예상 ${meta.estimatedSec}초)`;
   resultEl.innerHTML = '';
   try {
-    const res = await window.diagAPI.runProfile({ profileId });
+    const res = await window.diagAPI.runProfile({ profileId, notes: readJobNotes() });
     const rep = res.report;
     const skipped = rep.sections.filter((s) => s.result === 'NOT_TESTED');
     resultEl.innerHTML = `
@@ -637,8 +647,12 @@ async function loadSessionsView() {
     return;
   }
   empty.textContent = `${list.length}개 세션이 기록되어 있습니다.`;
-  const opts = list.slice().reverse().map((s) =>
-    `<option value="${esc(s.id)}">${new Date(s.issuedAt).toLocaleString('ko-KR')} · ${esc(s.profileLabel || s.profileId)}${s.grade ? ` · ${esc(s.grade)}등급` : ''}</option>`).join('');
+  // 고객·장비를 적어뒀다면 목록에서 바로 보이게 한다. 여러 대를 다룰 때
+  // 날짜와 프로필만으로는 어느 것이 누구 기록인지 알 수 없다.
+  const opts = list.slice().reverse().map((s) => {
+    const who = s.notes ? [s.notes.customer, s.notes.device].filter(Boolean).join(' / ') : '';
+    return `<option value="${esc(s.id)}">${who ? esc(who) + ' · ' : ''}${new Date(s.issuedAt).toLocaleString('ko-KR')} · ${esc(s.profileLabel || s.profileId)}${s.grade ? ` · ${esc(s.grade)}등급` : ''}</option>`;
+  }).join('');
   before.innerHTML = opts;
   after.innerHTML = opts;
   if (list.length >= 2) { before.selectedIndex = 1; after.selectedIndex = 0; }

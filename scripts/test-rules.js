@@ -15,7 +15,7 @@ const { listIssues, getIssue, wizardFor, RISK_ORDER } = require('../src/engine/i
 const { versionInfo } = require('../src/engine/version');
 const { sanitize: sanitizeSettings, DEFAULTS: SETTINGS_DEFAULTS } = require('../src/engine/settings');
 const { compareSessions } = require('../src/engine/sessionCompare');
-const { extractMetrics, hardwareKeyOf, scopeKeyOf } = require('../src/engine/sessions');
+const { extractMetrics, hardwareKeyOf, scopeKeyOf, sanitizeNotes, NOTE_LIMITS } = require('../src/engine/sessions');
 const { buildInspectionReport } = require('../src/engine/inspectionReport');
 
 let passed = 0;
@@ -1047,7 +1047,7 @@ test('원인을 PSU로 단정하지 않는다', () => {
 // ============================================================
 section('SMART 속성 파싱 (실제 smartctl 출력 형식)');
 // ============================================================
-const { parseSmartAttributes, parseSmartIdentity, parseSmartHealthOutput } = require('../src/engine/collectors');
+const { parseSmartAttributes, parseSmartIdentity, parseSmartHealthOutput, parseAtaSmart } = require('../src/engine/collectors');
 
 // 이 개발 PC의 실제 NVMe(SK hynix Gold P31) smartctl -H -i -A 출력을 그대로 가져온 것.
 const NVME_SAMPLE = `smartctl 7.5 2025-04-30 r5714 [x86_64-w64-mingw32-w10-22H2] (AppVeyor)
@@ -1981,6 +1981,140 @@ test('프로필 없이 부른 기존 경로는 그대로 동작한다', () => {
   const r = buildReport(baseInput());
   assert.strictEqual(r.profile, null);
   assert.strictEqual(findSection(r, 'CPU').status, 'normal');
+});
+
+// ============================================================
+section('업무용 기록 — 고객 · 장비 · 담당자');
+// ============================================================
+
+test('빈 값만 있으면 메모를 만들지 않는다', () => {
+  assert.strictEqual(sanitizeNotes(null), null);
+  assert.strictEqual(sanitizeNotes({}), null);
+  assert.strictEqual(sanitizeNotes({ customer: '   ', memo: '' }), null);
+});
+
+test('적은 항목만 남기고 공백을 다듬는다', () => {
+  assert.deepStrictEqual(sanitizeNotes({ customer: '  김OO  ', memo: '' }), { customer: '김OO' });
+});
+
+test('길이를 넘으면 잘라낸다 (렌더러 값을 믿지 않는다)', () => {
+  const long = 'ㄱ'.repeat(200);
+  const n = sanitizeNotes({ customer: long });
+  assert.strictEqual(n.customer.length, NOTE_LIMITS.customer);
+});
+
+test('모르는 키는 무시한다', () => {
+  assert.strictEqual(sanitizeNotes({ 등급: 'A+', 판정: '정상' }), null);
+  assert.deepStrictEqual(sanitizeNotes({ customer: '김OO', 등급: 'A+' }), { customer: '김OO' });
+});
+
+test('문자열이 아닌 값은 받지 않는다', () => {
+  assert.strictEqual(sanitizeNotes({ customer: 123, memo: { a: 1 } }), null);
+});
+
+test('[핵심] 메모는 판정에 전혀 영향을 주지 않는다', () => {
+  // 사람이 적는 자유 입력이 등급이나 이슈를 바꾸면 안 된다.
+  const plain = buildReport(baseInput());
+  const inspA = buildInspectionReport(plain, { systemSerial: 'S1' }, '2026-08-13T00:00:00Z', { included: false }, {});
+  const inspB = buildInspectionReport(plain, { systemSerial: 'S1' }, '2026-08-13T00:00:00Z', { included: false },
+    { notes: { customer: '김OO', memo: '재부팅 반복' } });
+  assert.strictEqual(inspA.overallGrade.letter, inspB.overallGrade.letter);
+  assert.deepStrictEqual(inspA.categoryScores, inspB.categoryScores);
+  assert.deepStrictEqual(inspA.testScope, inspB.testScope);
+});
+
+test('메모는 리포트에 실리고 해시에 포함된다', () => {
+  const plain = buildReport(baseInput());
+  const insp = buildInspectionReport(plain, { systemSerial: 'S1' }, '2026-08-13T00:00:00Z', { included: false },
+    { notes: { customer: '김OO', technician: '박기사' } });
+  assert.strictEqual(insp.notes.customer, '김OO');
+  assert.ok(verifyInspectionReport(insp));
+
+  // "누구 것을 누가 검사했다"를 바꿔치기하면 검증에 실패해야 한다.
+  const tampered = JSON.parse(JSON.stringify(insp));
+  tampered.notes.customer = '이OO';
+  assert.ok(!verifyInspectionReport(tampered), '고객명을 바꿨는데 검증이 통과하면 안 됨');
+});
+
+test('메모가 없으면 예전과 같은 해시를 만든다', () => {
+  // 메모를 안 쓰는 사용자에게 영향이 없어야 한다.
+  const plain = buildReport(baseInput());
+  const a = buildInspectionReport(plain, { systemSerial: 'S1' }, '2026-08-13T00:00:00Z', { included: false }, {});
+  const b = buildInspectionReport(plain, { systemSerial: 'S1' }, '2026-08-13T00:00:00Z', { included: false }, { notes: null });
+  assert.strictEqual(a.verificationHash, b.verificationHash);
+  assert.strictEqual(a.notes, null);
+});
+
+// ============================================================
+section('ATA/SATA SMART 파서 — 조용히 데이터를 잃지 않는다');
+// ============================================================
+// ⚠ 이 개발 PC에는 SATA 장치가 없어(NVMe 1개뿐) 실장비로 검증하지 못했다.
+//   아래는 형식 변형에 대한 방어를 고정하는 테스트이며, 실장비 검증을 대체하지 않는다.
+
+const ATA_HEADER = 'ID# ATTRIBUTE_NAME          FLAG     VALUE WORST THRESH TYPE      UPDATED  WHEN_FAILED RAW_VALUE\n';
+
+test('임계값이 "---"로 오는 장치에서도 줄을 버리지 않는다', () => {
+  // 일부 장치·smartmontools 버전은 임계값이 없을 때 "---"를 찍는다.
+  // 숫자만 받으면 그 줄이 통째로 사라져 대기 중 섹터 같은 신호를 놓친다.
+  const out = ATA_HEADER
+    + '  5 Reallocated_Sector_Ct   0x0033   100   100   ---    Pre-fail  Always       -       0\n'
+    + '197 Current_Pending_Sector  0x0012   100   100   ---    Old_age   Always       -       8\n\n';
+  const a = parseAtaSmart(out);
+  assert.ok(a, '파싱 자체가 실패하면 안 됨');
+  assert.strictEqual(a.pendingSectors, 8, '대기 중 섹터를 읽어야 함');
+  assert.strictEqual(a.rows.length, 2);
+  assert.strictEqual(a.rows[1].threshold, null, '숫자가 아니면 값은 null로');
+  assert.strictEqual(a.unparsedRowCount, 0);
+});
+
+test('해석하지 못한 줄이 있으면 세어서 남긴다', () => {
+  const out = ATA_HEADER
+    + '  5 Reallocated_Sector_Ct   0x0033   100   100   010    Pre-fail  Always       -       0\n'
+    + '이건 형식이 전혀 다른 줄\n'
+    + '197 Current_Pending_Sector  0x0012   100   100   000    Old_age   Always       -       3\n\n';
+  const a = parseAtaSmart(out);
+  assert.strictEqual(a.unparsedRowCount, 1);
+  assert.strictEqual(a.rows.length, 2, '해석된 줄은 그대로 살아야 함');
+  assert.strictEqual(a.pendingSectors, 3);
+});
+
+test('[핵심] 해석 못 한 줄이 있으면 "속성 정상"이라고 말하지 않는다', () => {
+  // 못 읽은 줄에 고장 신호가 있었을 수 있다. 조용히 빠뜨리고 정상이라 하면 안 된다.
+  const clean = buildReport(baseInput({
+    storage: storageWithSmart({ kind: 'ata', pendingSectors: 0, reallocatedSectors: 0 }),
+  }));
+  const cleanEv = findSection(clean, 'STORAGE').normalEvidence.join(' ');
+  assert.ok(/SMART 상세 속성/.test(cleanEv), '정상일 때는 근거를 남겨야 함');
+
+  const withUnparsed = buildReport(baseInput({
+    storage: storageWithSmart({ kind: 'ata', pendingSectors: 0, reallocatedSectors: 0, unparsedRowCount: 2 }),
+  }));
+  const ev = findSection(withUnparsed, 'STORAGE').normalEvidence.join(' ');
+  assert.ok(/2줄을 해석하지 못했습니다/.test(ev), `해석 실패를 밝혀야 함: ${ev}`);
+  assert.ok(!/SMART 상세 속성/.test(ev), '해석 못 한 줄이 있는데 "속성 정상"이라 하면 안 됨');
+});
+
+test('RAW_VALUE에 공백이 섞여도 앞의 숫자를 읽는다', () => {
+  const out = ATA_HEADER
+    + '194 Temperature_Celsius     0x0022   032   045   000    Old_age   Always       -       32 (Min/Max 24/45)\n'
+    + '  9 Power_On_Hours          0x0032   059   059   000    Old_age   Always       -       36523\n\n';
+  const a = parseAtaSmart(out);
+  assert.strictEqual(a.powerOnHours, 36523);
+  assert.strictEqual(a.rows[0].raw, '32 (Min/Max 24/45)');
+});
+
+test('WHEN_FAILED가 채워진 속성은 제조사 기준 고장 임박으로 수집한다', () => {
+  const out = ATA_HEADER
+    + '  5 Reallocated_Sector_Ct   0x0033   005   005   010    Pre-fail  Always   FAILING_NOW  1200\n\n';
+  const a = parseAtaSmart(out);
+  assert.strictEqual(a.failingNow.length, 1);
+  assert.strictEqual(a.failingNow[0].id, 5);
+});
+
+test('표가 아예 없으면 null을 돌려준다 (지어내지 않는다)', () => {
+  assert.strictEqual(parseAtaSmart('SMART overall-health self-assessment test result: PASSED\n'), null);
+  assert.strictEqual(parseAtaSmart(''), null);
+  assert.strictEqual(parseAtaSmart(null), null);
 });
 
 // ============================================================
