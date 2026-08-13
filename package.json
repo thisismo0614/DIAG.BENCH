@@ -12,13 +12,13 @@
   },
   "author": "DIAG.BENCH",
   "license": "MIT",
-  "homepage": "https://github.com/OWNER/diag-bench",
+  "homepage": "https://github.com/thisismo0614/DIAG.BENCH",
   "repository": {
     "type": "git",
-    "url": "https://github.com/OWNER/diag-bench.git"
+    "url": "https://github.com/thisismo0614/DIAG.BENCH.git"
   },
   "bugs": {
-    "url": "https://github.com/OWNER/diag-bench/issues"
+    "url": "https://github.com/thisismo0614/DIAG.BENCH/issues"
   },
   "dependencies": {
     "qrcode": "^1.5.4",
