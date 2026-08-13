@@ -7,6 +7,7 @@ const assert = require('assert');
 const { buildReport } = require('../src/engine/rules');
 const { buildComparison } = require('../src/engine/compare');
 const { summarizeBaselineSamples, compareToBaseline } = require('../src/engine/baseline');
+const { analyzeMemoryConfig } = require('../src/engine/memoryConfig');
 const { buildInspectionReport } = require('../src/engine/inspectionReport');
 
 let passed = 0;
@@ -1502,6 +1503,156 @@ test('리포트에 기준선 비교 결과가 표시용으로 실린다', () => 
   assert.ok(r.baseline, 'report.baseline이 있어야 화면에서 표를 그릴 수 있다');
   assert.strictEqual(r.baseline.available, true);
   assert.strictEqual(r.baseline.ageDays, 10);
+});
+
+// ============================================================
+section('메모리 구성 진단 (혼합 DIMM · 정격 대비 속도 · 채널)');
+// ============================================================
+
+function dimm(over = {}) {
+  return {
+    slot: 'ChannelA-DIMM0', bank: 'BANK 0', manufacturer: 'Samsung',
+    partNumber: 'M378A1G43EB1-CPB', capacityGB: 8,
+    ratedSpeedMTs: 3200, configuredSpeedMTs: 3200, voltageV: 1.2,
+    type: 'DDR4', serial: '1', ...over,
+  };
+}
+function memMods(modules, over = {}) {
+  return {
+    supported: true, modules, totalSlots: 4, usedSlots: modules.length,
+    maxCapacityGB: 64, timingsAvailable: false, error: null, ...over,
+  };
+}
+// 이 개발 PC의 실제 구성(Samsung 8GB×4, 전부 동일, 정격=현재 2133)
+const REAL_PC_MODULES = memMods([0, 1, 2, 3].map((i) => dimm({
+  slot: `Channel${i < 2 ? 'A' : 'B'}-DIMM${i % 2}`, bank: `BANK ${i}`,
+  ratedSpeedMTs: 2133, configuredSpeedMTs: 2133, serial: String(15292416 + i),
+})));
+
+test('동일 모듈이 정격대로 돌면 이슈 없이 근거만 남는다 (이 PC 실제 구성)', () => {
+  const c = analyzeMemoryConfig(REAL_PC_MODULES);
+  assert.strictEqual(c.findings.length, 0, `이슈가 없어야 함: ${c.findings.map((f) => f.ruleId).join(', ')}`);
+  assert.ok(c.evidence.some((e) => e.includes('동일 사양')));
+  assert.ok(c.evidence.some((e) => e.includes('2133')));
+});
+
+test('[기획서 §7 핵심 사례] 혼합 DIMM + 정격 미달 → 경고', () => {
+  // XMP 3200 2개 + 기본 2666 2개 → 전체가 2666으로 동작
+  const c = analyzeMemoryConfig(memMods([
+    dimm({ slot: 'ChannelA-DIMM0', partNumber: 'AAA-3200', ratedSpeedMTs: 3200, configuredSpeedMTs: 2666 }),
+    dimm({ slot: 'ChannelA-DIMM1', partNumber: 'AAA-3200', ratedSpeedMTs: 3200, configuredSpeedMTs: 2666 }),
+    dimm({ slot: 'ChannelB-DIMM0', partNumber: 'BBB-2666', ratedSpeedMTs: 2666, configuredSpeedMTs: 2666 }),
+    dimm({ slot: 'ChannelB-DIMM1', partNumber: 'BBB-2666', ratedSpeedMTs: 2666, configuredSpeedMTs: 2666 }),
+  ]));
+  const f = c.findings.find((x) => x.ruleId === 'MEMORY_MIXED_DIMM_BELOW_RATED');
+  assert.ok(f, `혼합+정격미달 규칙이 걸려야 함: ${c.findings.map((x) => x.ruleId).join(', ')}`);
+  assert.strictEqual(f.level, 'warning');
+  assert.ok(f.explanation.includes('2666') && f.explanation.includes('3200'));
+  assert.strictEqual(c.summary.mixed, true);
+});
+
+test('[핵심] 혼합이어도 전부 정격대로 돌면 이슈로 올리지 않는다', () => {
+  // "혼합 RAM = 문제"라고 단정하면 멀쩡한 PC를 문제 있다고 말하게 된다.
+  const c = analyzeMemoryConfig(memMods([
+    dimm({ slot: 'ChannelA-DIMM0', partNumber: 'AAA-3200', ratedSpeedMTs: 3200, configuredSpeedMTs: 3200 }),
+    dimm({ slot: 'ChannelB-DIMM0', partNumber: 'BBB-3200', ratedSpeedMTs: 3200, configuredSpeedMTs: 3200 }),
+  ]));
+  assert.strictEqual(c.summary.mixed, true, '혼합이라는 사실은 기록해야 함');
+  assert.strictEqual(c.findings.length, 0, '혼합만으로 이슈를 올리면 안 됨');
+  assert.ok(c.evidence.some((e) => e.includes('서로 다른 모듈')), '혼합 사실은 근거로 남겨야 함');
+});
+
+test('동일 모듈인데 정격보다 낮으면 watch (BIOS 설정 가능성)', () => {
+  const c = analyzeMemoryConfig(memMods([
+    dimm({ slot: 'ChannelA-DIMM0', ratedSpeedMTs: 3200, configuredSpeedMTs: 2133 }),
+    dimm({ slot: 'ChannelB-DIMM0', ratedSpeedMTs: 3200, configuredSpeedMTs: 2133 }),
+  ]));
+  const f = c.findings.find((x) => x.ruleId === 'MEMORY_BELOW_RATED_SPEED');
+  assert.ok(f);
+  assert.strictEqual(f.level, 'watch');
+});
+
+test('[기획서 §8] 정격보다 높으면 "설정 변경됨"으로 알리되 고장이라 하지 않는다', () => {
+  const c = analyzeMemoryConfig(memMods([
+    dimm({ slot: 'ChannelA-DIMM0', ratedSpeedMTs: 2666, configuredSpeedMTs: 3200 }),
+    dimm({ slot: 'ChannelB-DIMM0', ratedSpeedMTs: 2666, configuredSpeedMTs: 3200 }),
+  ]));
+  const f = c.findings.find((x) => x.ruleId === 'MEMORY_ABOVE_RATED_SPEED');
+  assert.ok(f);
+  assert.strictEqual(f.level, 'watch');
+  assert.ok(!/고장|불량/.test(f.title), `제목에서 고장이라고 단정하면 안 됨: ${f.title}`);
+  assert.ok(/고장은 아니/.test(f.explanation), '설명에서 고장이 아니라는 점을 분명히 해야 함');
+  assert.ok(f.evidence.some((e) => e.includes('불안정하다는 뜻은 아닙니다')));
+});
+
+test('싱글 채널 장착을 감지한다', () => {
+  const c = analyzeMemoryConfig(memMods([
+    dimm({ slot: 'ChannelA-DIMM0' }), dimm({ slot: 'ChannelA-DIMM1' }),
+  ]));
+  assert.ok(c.findings.find((x) => x.ruleId === 'MEMORY_SINGLE_CHANNEL'));
+});
+
+test('슬롯 이름에서 채널을 못 읽으면 채널 얘기를 아예 하지 않는다', () => {
+  const c = analyzeMemoryConfig(memMods([
+    dimm({ slot: 'XPG-SLOT-1' }), dimm({ slot: 'XPG-SLOT-2' }),
+  ]));
+  assert.strictEqual(c.summary.channelsKnown, false);
+  assert.ok(!c.findings.find((x) => x.ruleId === 'MEMORY_SINGLE_CHANNEL'), '근거 없이 싱글 채널이라 하면 안 됨');
+  assert.ok(c.notTested.some((n) => n.includes('채널')), '검사 못 한 것으로 명시해야 함');
+});
+
+test('타이밍은 항상 "검사 안 함"으로 명시한다 (OS에서 못 읽음)', () => {
+  const c = analyzeMemoryConfig(REAL_PC_MODULES);
+  assert.ok(c.notTested.some((n) => n.includes('타이밍')));
+  assert.ok(c.evidence.some((e) => e.includes('정상이라는 뜻이 아닙니다')));
+});
+
+test('모듈 정보를 못 읽으면 정상이 아니라 "검사 안 함"이다', () => {
+  const c = analyzeMemoryConfig({ supported: false, modules: [], error: '조회 실패' });
+  assert.strictEqual(c.findings.length, 0);
+  assert.ok(c.notTested.length > 0, '못 읽은 것은 검사 안 함으로 남아야 함');
+});
+
+test('모듈 정보가 아예 없어도(구버전 raw) 진단이 깨지지 않는다', () => {
+  const c = analyzeMemoryConfig(undefined);
+  assert.strictEqual(c.supported, false);
+  assert.strictEqual(c.findings.length, 0);
+});
+
+test('진단 엔진에 연결되어 RAM 섹션 상태를 바꾼다', () => {
+  const r = buildReport(baseInput({
+    memoryModules: memMods([
+      dimm({ slot: 'ChannelA-DIMM0', partNumber: 'AAA-3200', ratedSpeedMTs: 3200, configuredSpeedMTs: 2666 }),
+      dimm({ slot: 'ChannelB-DIMM0', partNumber: 'BBB-2666', ratedSpeedMTs: 2666, configuredSpeedMTs: 2666 }),
+    ]),
+  }));
+  const ram = findSection(r, 'RAM');
+  assert.strictEqual(ram.status, 'warning');
+  const issue = ram.issues.find((i) => i.ruleId === 'MEMORY_MIXED_DIMM_BELOW_RATED');
+  assert.ok(issue, 'Rule ID가 이슈에 실려야 함');
+  assert.ok(issue.ruleVersion, 'Rule 버전이 실려야 함 (과거 결과 설명용)');
+  assert.strictEqual(issue.confidenceLevel, 'STRONG_INDICATION');
+  assert.ok(ram.memoryConfig, 'RAM 섹션에 구성 요약이 실려야 함');
+});
+
+test('[기획서 §14] 조치마다 위험도가 붙는다', () => {
+  const r = buildReport(baseInput({
+    memoryModules: memMods([
+      dimm({ slot: 'ChannelA-DIMM0', ratedSpeedMTs: 3200, configuredSpeedMTs: 2133 }),
+      dimm({ slot: 'ChannelB-DIMM0', ratedSpeedMTs: 3200, configuredSpeedMTs: 2133 }),
+    ]),
+  }));
+  const issue = findSection(r, 'RAM').issues.find((i) => i.ruleId === 'MEMORY_BELOW_RATED_SPEED');
+  assert.ok(issue.actionDetails.length > 0);
+  assert.ok(issue.actionDetails.every((a) => a.risk), '모든 조치에 위험도가 있어야 함');
+  assert.ok(issue.actionDetails.some((a) => a.risk === 'SAFE'), '확인만 하는 안전한 조치가 먼저 있어야 함');
+  assert.ok(issue.actionDetails.some((a) => a.risk === 'INTERMEDIATE'), 'BIOS 변경은 INTERMEDIATE여야 함');
+  assert.strictEqual(issue.actions.length, issue.actionDetails.length, '기존 문자열 배열도 유지되어야 함');
+});
+
+test('메모리 구성이 없으면 기존 RAM 진단이 달라지지 않는다', () => {
+  const withNothing = buildReport(baseInput());
+  assert.strictEqual(findSection(withNothing, 'RAM').status, 'normal');
 });
 
 // ============================================================

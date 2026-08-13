@@ -306,6 +306,105 @@ async function collectMemory() {
   };
 }
 
+// ---------- MEMORY: 모듈(DIMM) 단위 구성 ----------
+// si.mem()은 총 용량/사용량만 준다. "이 PC에 어떤 메모리가 어떻게 꽂혀 있는가"는
+// Win32_PhysicalMemory로만 알 수 있고, 이게 혼합 DIMM·정격 미달 동작 진단의 근거가 된다.
+//
+// 이 PC에서 실측으로 확인한 것(관리자 권한 불필요):
+//   읽힘   : Manufacturer, PartNumber, Capacity, Speed(정격), ConfiguredClockSpeed(현재),
+//            ConfiguredVoltage, DeviceLocator(슬롯), SMBIOSMemoryType, SerialNumber
+//   안 읽힘: **타이밍(CL/tRCD/tRP)** — WMI에 속성 자체가 없다. SPD를 SMBus로 직접 읽어야
+//            하는데 그건 커널 드라이버가 필요하다. 그러니 타이밍은 "확인 안 됨"으로 남긴다.
+//   비어옴 : MinVoltage/MaxVoltage가 0으로 오는 보드가 있다(이 PC가 그렇다) → 0은 값이 아니라
+//            "보드가 안 채웠다"는 뜻이므로 null로 바꾼다. 0V를 실제 전압으로 보여주면 오정보다.
+//
+// XMP/EXPO 프로파일 목록 자체도 SPD를 읽어야 알 수 있어서 조회할 수 없다. 대신
+// Speed(모듈이 보고한 정격)와 ConfiguredClockSpeed(지금 도는 속도)의 차이는 실제로 읽히므로,
+// **"프로파일이 있다"고 말하지 않고 "정격보다 낮게/높게 돌고 있다"는 측정 사실만** 말한다.
+
+// SMBIOS 규격의 메모리 타입 코드. 모르는 값은 지어내지 않고 null로 둔다.
+const SMBIOS_MEMORY_TYPES = { 20: 'DDR', 21: 'DDR2', 24: 'DDR3', 26: 'DDR4', 34: 'DDR5' };
+
+async function collectMemoryModules() {
+  const unsupported = {
+    supported: false, modules: [], totalSlots: null, usedSlots: null,
+    maxCapacityGB: null, timingsAvailable: false, error: null,
+  };
+  if (process.platform !== 'win32') return { ...unsupported, error: 'Windows에서만 조회할 수 있습니다.' };
+
+  const out = await run(
+    'powershell -NoProfile -Command "Get-CimInstance Win32_PhysicalMemory | Select-Object BankLabel,DeviceLocator,Manufacturer,PartNumber,Capacity,Speed,ConfiguredClockSpeed,ConfiguredVoltage,SMBIOSMemoryType,FormFactor,SerialNumber | ConvertTo-Json -Compress"',
+    8000
+  );
+  if (!out) return { ...unsupported, error: '메모리 모듈 정보를 조회하지 못했습니다.' };
+
+  let raw;
+  try {
+    const parsed = JSON.parse(out);
+    raw = Array.isArray(parsed) ? parsed : [parsed];
+  } catch {
+    return { ...unsupported, error: '메모리 모듈 정보를 해석하지 못했습니다.' };
+  }
+  if (!raw.length) return { ...unsupported, error: '메모리 모듈이 조회되지 않았습니다.' };
+
+  // 슬롯 총개수는 별도 클래스에 있다. 실패해도 모듈 정보는 살린다(부분 성공 허용).
+  let totalSlots = null;
+  let maxCapacityGB = null;
+  const arrOut = await run(
+    'powershell -NoProfile -Command "Get-CimInstance Win32_PhysicalMemoryArray | Select-Object MemoryDevices,MaxCapacityEx | ConvertTo-Json -Compress"',
+    6000
+  );
+  if (arrOut) {
+    try {
+      const a = JSON.parse(arrOut);
+      const first = Array.isArray(a) ? a[0] : a;
+      if (first) {
+        totalSlots = Number(first.MemoryDevices) || null;
+        // MaxCapacityEx 단위는 KB다.
+        maxCapacityGB = first.MaxCapacityEx ? round(Number(first.MaxCapacityEx) / 1024 / 1024, 0) : null;
+      }
+    } catch { /* 슬롯 수는 없어도 된다 */ }
+  }
+
+  const modules = raw.map((m, i) => {
+    const cap = Number(m.Capacity);
+    const rated = Number(m.Speed) || null;
+    const configured = Number(m.ConfiguredClockSpeed) || null; // 0으로 오면 "확인 안 됨"
+    const volt = Number(m.ConfiguredVoltage) || null;          // 0으로 오면 "확인 안 됨"
+    return {
+      slot: str(m.DeviceLocator) || str(m.BankLabel) || `DIMM ${i + 1}`,
+      bank: str(m.BankLabel),
+      manufacturer: str(m.Manufacturer),
+      partNumber: str(m.PartNumber),
+      capacityGB: Number.isFinite(cap) && cap > 0 ? round(cap / 1024 / 1024 / 1024, 0) : null,
+      ratedSpeedMTs: rated,
+      configuredSpeedMTs: configured,
+      voltageV: volt ? round(volt / 1000, 3) : null,
+      type: SMBIOS_MEMORY_TYPES[Number(m.SMBIOSMemoryType)] || null,
+      serial: str(m.SerialNumber),
+    };
+  });
+
+  return {
+    supported: true,
+    modules,
+    totalSlots,
+    usedSlots: modules.length,
+    maxCapacityGB,
+    // 타이밍은 이 경로로는 절대 못 읽는다. "검사 안 함"임을 데이터에 남겨서
+    // 리포트가 "타이밍 정상"이라고 말하는 일이 생기지 않게 한다.
+    timingsAvailable: false,
+    error: null,
+  };
+}
+
+// PowerShell이 돌려주는 문자열은 뒤에 공백이 붙어 오는 경우가 많다(PartNumber가 특히 그렇다).
+function str(v) {
+  if (v === null || v === undefined) return null;
+  const s = String(v).trim();
+  return s.length ? s : null;
+}
+
 // ---------- GPU ----------
 // systeminformation의 si.graphics()는 정적 정보(모델/VRAM 용량) 위주라
 // 실시간 로드/온도/클럭은 NVIDIA의 경우 nvidia-smi로 보완한다.
@@ -721,6 +820,7 @@ module.exports = {
   collectIdleSnapshot,
   sampleCpuTrend,
   collectMemory,
+  collectMemoryModules,
   collectGpu,
   sampleGpuTrend,
   collectStorage,

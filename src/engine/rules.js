@@ -10,6 +10,39 @@
 // "온도 65°C, 클럭 안정, VRAM 여유" 같은 근거를 함께 제공한다.
 
 const { compareToBaseline, deltasForSection, IDLE_CPU_LOAD_MAX, IDLE_GPU_LOAD_MAX } = require('./baseline');
+const { analyzeMemoryConfig } = require('./memoryConfig');
+
+// 진단 신뢰도의 어휘. 숫자만으로는 "무엇을 근거로 이 정도 확신을 하는가"가 드러나지 않는다.
+//   CONFIRMED          실제 오류/사실이 측정으로 확인됨
+//   STRONG_INDICATION  강한 연관성이 있으나 그것만으로 원인을 확정할 수는 없음
+//   POSSIBLE_CAUSE     가능성 있는 원인 후보
+//   NEEDS_VERIFICATION 추가 검사가 필요함
+// 기존 숫자 confidence와 함께 쓴다(과거 리포트/화면과의 호환을 깨지 않기 위해).
+const CONFIDENCE_SCORE = {
+  CONFIRMED: 95,
+  STRONG_INDICATION: 78,
+  POSSIBLE_CAUSE: 55,
+  NEEDS_VERIFICATION: 35,
+};
+
+// memoryConfig 같은 "규칙 모듈"이 만든 finding을 이슈로 옮긴다.
+// 판정(level·confidence)은 규칙 모듈이 이미 끝냈고 여기서는 형태만 맞춘다.
+function issueFromFinding(f) {
+  // 조치는 {text, risk} 형태로 온다. 위험도를 모르는 기존 화면도 그대로 동작하도록
+  // 문자열 배열(actions)을 유지하고, 위험도가 필요한 쪽은 actionDetails를 읽는다.
+  const details = (f.actions || []).map((a) => (typeof a === 'string' ? { text: a, risk: null } : a));
+  const issue = mkIssue(
+    f.level, f.title, f.explanation, f.causes,
+    details.map((a) => a.text),
+    CONFIDENCE_SCORE[f.confidence] ?? null,
+    f.evidence, f.verification
+  );
+  issue.ruleId = f.ruleId;             // 어떤 규칙이 이 판정을 냈는지 (기획서 §12)
+  issue.ruleVersion = f.ruleVersion;   // 판정 로직이 바뀌어도 과거 결과를 설명할 수 있게 (§60)
+  issue.confidenceLevel = f.confidence; // §11 어휘
+  issue.actionDetails = details;        // §14 조치별 위험도
+  return issue;
+}
 
 function evaluateCpu(cpu, trend, topProcesses, cpuStress, baselineComparison) {
   const stress = cpuStressFindings(cpuStress);
@@ -87,10 +120,13 @@ function evaluateCpu(cpu, trend, topProcesses, cpuStress, baselineComparison) {
   return finalize('CPU', issues, null, normalEvidence);
 }
 
-function evaluateMemory(mem, topProcesses, ramTest, baselineComparison) {
+function evaluateMemory(mem, topProcesses, ramTest, baselineComparison, memModules) {
   const ram = ramTestFindings(ramTest);
   const base = baselineFindings(baselineComparison, 'RAM');
-  const issues = [...ram.issues, ...base.issues];
+  // 용량/사용률과 별개로 "어떤 모듈이 어떻게 꽂혀서 어떤 속도로 도는가"를 본다.
+  // 안정성 테스트를 통과해도 구성 문제는 그대로 남아 있을 수 있다(memoryConfig.js).
+  const cfg = analyzeMemoryConfig(memModules);
+  const issues = [...ram.issues, ...base.issues, ...cfg.findings.map(issueFromFinding)];
   if (mem.usedPercent >= 90) {
     const issue = mkIssue('warning', '메모리 사용량이 한계에 가깝습니다',
       `전체 ${mem.totalGB}GB 중 ${mem.usedGB}GB(${mem.usedPercent}%)가 사용 중입니다. 아래 프로세스가 메모리를 많이 점유하고 있습니다.`,
@@ -111,8 +147,13 @@ function evaluateMemory(mem, topProcesses, ramTest, baselineComparison) {
       70, [`스왑 ${mem.swapUsedGB}GB / ${mem.swapTotalGB}GB 사용 중`],
       '재부팅 후 동일 작업을 반복하며 스왑 사용량 추이를 다시 확인하세요.'));
   }
-  const normalEvidence = [`사용률 ${mem.usedPercent}%`, `가용 메모리 ${mem.availableGB}GB / 전체 ${mem.totalGB}GB`, ...ram.evidence, ...base.evidence];
-  return finalize('RAM', issues, null, normalEvidence);
+  const normalEvidence = [`사용률 ${mem.usedPercent}%`, `가용 메모리 ${mem.availableGB}GB / 전체 ${mem.totalGB}GB`, ...ram.evidence, ...base.evidence, ...cfg.evidence];
+  const section = finalize('RAM', issues, null, normalEvidence);
+  // 이슈가 있어도 구성 근거는 보여야 한다(어떤 모듈이 꽂혀 있는지는 판정과 무관한 사실이다).
+  section.memoryConfig = cfg.summary;
+  section.notTested = cfg.notTested;
+  if (section.status !== 'normal') section.evidenceAlways = cfg.evidence;
+  return section;
 }
 
 // VRAM 압박·무결성 테스트는 렌더러에서 따로 실행하고 결과만 기록해둔다(vramChecks.js).
@@ -1080,7 +1121,7 @@ function applyCorrelations(sections) {
 }
 
 // ---------- 통합 ----------
-function buildReport({ cpu, cpuTrend, memory, gpu, gpuTrend, storage, network, display, visualChecks, vramCheck, gpuStressCheck, baseline, baselineSnapshot, deepTests, system, symptom, topProcesses, eventLog }) {
+function buildReport({ cpu, cpuTrend, memory, memoryModules, gpu, gpuTrend, storage, network, display, visualChecks, vramCheck, gpuStressCheck, baseline, baselineSnapshot, deepTests, system, symptom, topProcesses, eventLog }) {
   // 정밀 검사(부하 테스트)를 돌렸다면 그 결과도 규칙 엔진에 넣는다. 이게 빠져 있으면
   // "RAM 검사에서 오류가 났는데 최종 등급은 정상"이라는 최악의 상황이 생긴다.
   const dt = deepTests && deepTests.included ? deepTests : {};
@@ -1106,7 +1147,7 @@ function buildReport({ cpu, cpuTrend, memory, gpu, gpuTrend, storage, network, d
 
   let sections = [
     evaluateCpu(cpu, cpuTrend, topProcesses, dt.cpuStress, baselineComparison),
-    evaluateMemory(memory, topProcesses, dt.ramTest, baselineComparison),
+    evaluateMemory(memory, topProcesses, dt.ramTest, baselineComparison, memoryModules),
     evaluateGpu(gpu, gpuTrend, { vramCheck, gpuStressCheck, baselineComparison }),
     evaluateStorage(storage, dt.storageTest),
     evaluateNetwork(network),
