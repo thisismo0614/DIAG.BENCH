@@ -23,6 +23,10 @@
 <meta name="twitter:image" content="{{SITE_URL}}/og.png">
 
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
+<!-- 글꼴은 CSS를 받아서 파싱한 뒤에야 발견된다. 미리 알려주면 그만큼 일찍 시작해
+     본문이 맑은 고딕으로 보였다가 바뀌는 구간이 짧아진다.
+     crossorigin은 같은 출처라도 필수다 — 없으면 브라우저가 따로 한 번 더 받는다. -->
+<link rel="preload" href="fonts/diagbench-sans.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="styles.css">
 
 <script type="application/ld+json">

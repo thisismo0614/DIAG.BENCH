@@ -59,9 +59,16 @@ jobs:
           set -e
           cd website/dist
           for f in index.html download.html faq.html 404.html styles.css favicon.svg robots.txt sitemap.xml \
-                   guides.html learn.html user-guide.html technical.html og.png; do
+                   guides.html learn.html user-guide.html technical.html og.png \
+                   fonts/diagbench-sans.woff2; do
             test -s "$f" || { echo "누락: $f"; exit 1; }
           done
+
+          # 글꼴 원본(2 MB)이 실수로 public/에 남아 함께 배포되는 것을 막는다.
+          # 서브셋만 나가야 한다 — 원본이 섞이면 서브셋을 만든 의미가 없어진다.
+          font_kb=$(du -k fonts/diagbench-sans.woff2 | cut -f1)
+          test "$font_kb" -lt 500 || { echo "글꼴이 ${font_kb}KB다. 원본이 섞였는지 확인할 것"; exit 1; }
+          test "$(ls fonts | wc -l)" -eq 1 || { echo "fonts/에 파일이 여러 개다: $(ls fonts)"; exit 1; }
 
           # 지식 DB에서 생성되는 가이드 페이지가 실제로 만들어졌는지 확인한다.
           # (issueDb를 못 읽으면 build.js가 조용히 0개를 만들고 끝날 수 있다)

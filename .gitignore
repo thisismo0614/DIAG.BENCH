@@ -16,3 +16,6 @@ website/dist/
 
 # CI/로컬에서 electron·electron-builder 바이너리 캐시가 여기에 생긴다
 .cache/
+
+# 글꼴 서브셋 원본 캐시 (2 MB) — 결과물만 커밋한다
+website/.cache/

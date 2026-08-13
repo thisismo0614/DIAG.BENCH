@@ -87,6 +87,39 @@ Electron은 MIT이지만 내부에 Chromium과 Node.js를 포함하며, 이들�
 
 ---
 
+## 3-1. Pretendard (웹사이트 글꼴) — SIL Open Font License 1.1
+
+공식 웹사이트(`website/`)가 본문 글꼴로 **Pretendard**를 자체 호스팅합니다.
+**앱 설치 파일에는 포함되지 않습니다** — 웹사이트에만 해당합니다.
+
+- 프로젝트: https://github.com/orioncactus/pretendard
+- 저작권: Copyright (c) 2021 Kil Hyung-jin, with Reserved Font Name Pretendard
+- 라이선스: **SIL Open Font License, Version 1.1** — https://scripts.sil.org/OFL
+- 라이선스 전문: https://github.com/orioncactus/pretendard/blob/main/LICENSE
+
+### 원본 그대로가 아니라 서브셋해서 씁니다
+
+배포 파일은 `website/public/fonts/diagbench-sans.woff2`이며,
+원본 `PretendardVariable.woff2`(2,009 KB)에서 다음을 추려 만든 것입니다(294 KB).
+
+| 항목 | 내용 |
+|---|---|
+| 원본 | Pretendard v1.3.9 Variable |
+| 담은 글자 | KS X 1001 상용 한글 2,350자 + 사이트 본문에 쓰인 글자 + 라틴·문장부호 (총 2,499자) |
+| 가변 축 | `wght` 45–930 → **400–700으로 축소** (사이트가 쓰는 범위) |
+| 생성 방법 | `website/scripts/build-font-subset.py` (fontTools) |
+
+OFL 1.1은 서브셋·개조를 허용하며, 조건은 다음과 같고 모두 지키고 있습니다.
+
+1. **저작권 고지와 라이선스를 함께 배포** — 이 문서가 그 고지입니다.
+2. **예약 글꼴 이름(Reserved Font Name) "Pretendard"를 개조본 이름에 쓰지 않을 것**
+   — 서브셋도 개조본으로 보아, 글꼴 내부 `name` 테이블(nameID 1·4·6·16)과 CSS의
+   `font-family`를 모두 **`DIAGBENCH Sans`** 로 바꿨습니다. 파일명도 `diagbench-sans.woff2`입니다.
+   이름을 바꿨다고 고지 의무가 없어지지는 않으므로, 원본과 저작권자는 위에 그대로 밝힙니다.
+3. **글꼴 자체를 유료로 판매하지 않을 것** — 웹사이트에서 무료로 제공됩니다.
+
+---
+
 ## 4. 이 앱이 사용하는 외부 명령 (동봉하지 않음)
 
 아래는 Windows에 이미 있거나 사용자가 별도로 설치한 것을 호출만 합니다. 배포하지 않습니다.
