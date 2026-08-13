@@ -40,7 +40,12 @@ function createLatestCheckStore({ fileName, normalize, staleMs = DEFAULT_STALE_M
     return check;
   }
 
-  return { load, save, active, staleMs, filePath };
+  function clear(userDataDir) {
+    const file = filePath(userDataDir);
+    if (fs.existsSync(file)) fs.unlinkSync(file);
+  }
+
+  return { load, save, active, clear, staleMs, filePath };
 }
 
 module.exports = { createLatestCheckStore, DEFAULT_STALE_MS };

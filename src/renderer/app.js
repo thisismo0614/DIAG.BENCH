@@ -331,6 +331,99 @@ document.getElementById('history-clear-btn').addEventListener('click', async () 
 document.querySelector('[data-target="view-history"]').addEventListener('click', loadHistoryView);
 
 /* ============================================================
+   BASELINE — 평소 상태 기준선
+   ------------------------------------------------------------
+   여기서는 아무것도 판정하지 않는다. 저장 여부(verdict)는 메인 프로세스의
+   summarizeBaselineSamples가 정하고, 화면은 그 결과를 보여주기만 한다.
+   렌더러가 따로 "이 정도면 괜찮겠지" 하고 저장해버리면 부하 상태가 평소로 굳는다.
+============================================================ */
+const baselineProgressEl = document.getElementById('baseline-progress');
+const baselineResultEl = document.getElementById('baseline-result');
+const baselineCurrentEl = document.getElementById('baseline-current');
+const baselineCaptureBtn = document.getElementById('baseline-capture-btn');
+
+window.diagAPI.onBaselineProgress(({ done, total }) => {
+  baselineProgressEl.style.display = 'block';
+  baselineProgressEl.textContent = `측정 중... ${done}/${total} 샘플 (PC를 그대로 두세요)`;
+});
+
+function fmtBaselineRow(label, value, unit) {
+  if (value === null || value === undefined) return '';
+  return `<div class="metric-card"><div class="metric-label">${label}</div><div class="metric-value">${value}<span class="unit">${unit}</span></div></div>`;
+}
+
+function renderBaseline(b) {
+  if (!b) {
+    baselineCurrentEl.innerHTML = '<p class="mini-desc">저장된 기준선이 없습니다. 위에서 측정을 실행하면 다음 진단부터 "평소 대비" 비교가 붙습니다.</p>';
+    return;
+  }
+  const captured = new Date(b.checkedAt);
+  const ageDays = Math.max(0, Math.floor((Date.now() - captured.getTime()) / 86400000));
+  const cards = [
+    fmtBaselineRow('CPU 온도', b.cpuIdleTempC, '°C'),
+    fmtBaselineRow('CPU 사용률', b.cpuIdleLoadPercent, '%'),
+    fmtBaselineRow('CPU 클럭', b.cpuIdleClockGHz, 'GHz'),
+    fmtBaselineRow('GPU 온도', b.gpuIdleTempC, '°C'),
+    fmtBaselineRow('메모리 사용률', b.memIdleUsedPercent, '%'),
+  ].filter(Boolean).join('');
+
+  // 기준선이 얼마나 믿을 만한지도 함께 보여준다 — 편차가 크면 "평소 값"이라고 하기 어렵다.
+  const notes = [
+    `측정 시각: ${captured.toLocaleString('ko-KR')} (${ageDays === 0 ? '오늘' : `${ageDays}일 전`})`,
+    `유효 샘플 ${b.idleSampleCount}/${b.sampleCount}개${b.durationSec ? ` · ${b.durationSec}초간 측정` : ''}`,
+    b.cpuIdleTempSpreadC !== null ? `측정 중 CPU 온도 편차 ${b.cpuIdleTempSpreadC}°C` : null,
+    b.cpuModel ? `기준 CPU: ${b.cpuModel}` : null,
+    b.gpuModel ? `기준 GPU: ${b.gpuModel}` : null,
+    b.gpuNote,
+  ].filter(Boolean);
+
+  baselineCurrentEl.innerHTML = `
+    <div class="metric-grid">${cards}</div>
+    <ul class="mini-desc" style="margin-top:12px;padding-left:18px;">
+      ${notes.map((n) => `<li>${n}</li>`).join('')}
+    </ul>`;
+}
+
+async function loadBaselineView() {
+  renderBaseline(await window.diagAPI.getBaseline());
+}
+
+baselineCaptureBtn.addEventListener('click', async () => {
+  baselineCaptureBtn.disabled = true;
+  baselineCaptureBtn.textContent = '측정 중...';
+  baselineResultEl.innerHTML = '';
+  try {
+    const res = await window.diagAPI.captureBaseline();
+    baselineProgressEl.style.display = 'none';
+    if (res.saved) {
+      baselineResultEl.innerHTML = `<div class="note-card">기준선을 저장했습니다. 샘플 ${res.sampleCount}개 중 ${res.idleSampleCount}개가 유휴 상태였습니다. 다음 전체 진단부터 "평소 대비" 비교가 함께 표시됩니다.</div>`;
+    } else {
+      // 저장하지 않은 이유를 그대로 보여준다. "실패"가 아니라 "이 측정은 평소 상태가 아니었다"는 뜻이다.
+      baselineResultEl.innerHTML = `<div class="note-card">기준선으로 저장하지 않았습니다.<br>${res.reason}</div>`;
+    }
+    await loadBaselineView();
+  } finally {
+    baselineCaptureBtn.disabled = false;
+    baselineCaptureBtn.textContent = '기준선 측정 시작';
+  }
+});
+
+document.getElementById('baseline-clear-btn').addEventListener('click', async () => {
+  await window.diagAPI.clearBaseline();
+  baselineResultEl.innerHTML = '';
+  await loadBaselineView();
+});
+
+document.querySelector('[data-target="view-baseline"]').addEventListener('click', async () => {
+  const plan = await window.diagAPI.getBaselineCapturePlan();
+  document.getElementById('baseline-plan-desc').innerHTML =
+    `${plan.samples}개 샘플을 ${plan.intervalMs / 1000}초 간격으로 약 ${plan.estimatedSec}초간 측정합니다. `
+    + '측정 중에는 <b>다른 프로그램을 모두 종료</b>하고 PC를 그대로 두세요. '
+    + '측정 도중 부하가 걸리면 그 값은 "평소"가 아니므로 기준선으로 저장하지 않습니다.';
+  loadBaselineView();
+});
+
+/* ============================================================
    STABILITY TESTS
 ============================================================ */
 window.diagAPI.onStressProgress((data) => {

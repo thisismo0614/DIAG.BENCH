@@ -21,6 +21,7 @@
       <div class="nav-group-label">종합</div>
       <button class="nav-item active" data-target="view-dashboard">대시보드</button>
       <button class="nav-item" data-target="view-history">진단 기록</button>
+      <button class="nav-item" data-target="view-baseline">평소 상태 기준선</button>
       <button class="nav-item" data-target="view-inspection">판매용 점검 리포트</button>
     </div>
     <div class="nav-group">
@@ -114,6 +115,29 @@
         <button class="btn" id="history-clear-btn">기록 전체 삭제</button>
       </div>
       <div id="history-list"></div>
+    </section>
+
+    <!-- ================= 평소 상태 기준선 ================= -->
+    <section class="view" id="view-baseline">
+      <div class="eyebrow">BASELINE</div>
+      <h1 class="title">평소 상태 기준선</h1>
+      <p class="desc">아무 작업도 하지 않는 <b>유휴 상태</b>의 온도·사용량을 기록해둡니다. 그러면 다음 진단부터 "평소 44°C였는데 지금 58°C"처럼 <b>이 PC 기준</b>으로 비교할 수 있습니다. 먼지 누적이나 쿨러 열화처럼 서서히 나빠지는 문제는 절대 온도 임계값으로는 잡히지 않고 이 비교로만 보입니다.</p>
+
+      <div class="device-panel">
+        <div class="device-panel-title" style="margin-bottom:10px;">기준선 측정</div>
+        <p class="mini-desc" id="baseline-plan-desc">측정 중에는 <b>다른 프로그램을 모두 종료</b>하고 PC를 그대로 두세요. 측정 도중 부하가 걸리면 그 값은 "평소"가 아니므로 기준선으로 저장하지 않습니다.</p>
+        <div class="btn-row" style="margin-top:12px;">
+          <button class="btn" id="baseline-capture-btn">기준선 측정 시작</button>
+          <button class="btn" id="baseline-clear-btn">기준선 삭제</button>
+        </div>
+        <div id="baseline-progress" class="note-card" style="display:none;margin-top:12px;"></div>
+        <div id="baseline-result" style="margin-top:12px;"></div>
+      </div>
+
+      <div class="device-panel">
+        <div class="device-panel-title" style="margin-bottom:10px;">현재 저장된 기준선</div>
+        <div id="baseline-current"></div>
+      </div>
     </section>
 
     <!-- ================= 판매용 점검 리포트 ================= -->

@@ -9,9 +9,12 @@
 // 정상 판정도 근거를 남긴다: "GPU 정상"이라고만 말하지 않고
 // "온도 65°C, 클럭 안정, VRAM 여유" 같은 근거를 함께 제공한다.
 
-function evaluateCpu(cpu, trend, topProcesses, cpuStress) {
+const { compareToBaseline, deltasForSection, IDLE_CPU_LOAD_MAX, IDLE_GPU_LOAD_MAX } = require('./baseline');
+
+function evaluateCpu(cpu, trend, topProcesses, cpuStress, baselineComparison) {
   const stress = cpuStressFindings(cpuStress);
-  const issues = [...stress.issues];
+  const base = baselineFindings(baselineComparison, 'CPU');
+  const issues = [...stress.issues, ...base.issues];
 
   if (cpu.tempC !== null) {
     if (cpu.tempC >= 95) {
@@ -79,14 +82,15 @@ function evaluateCpu(cpu, trend, topProcesses, cpuStress) {
   if (cpu.tempC !== null) normalEvidence.push(`온도 ${cpu.tempC}°C`);
   normalEvidence.push(`부하 ${cpu.loadPercent}%`);
   if (cpu.clockGHz) normalEvidence.push(`클럭 ${cpu.clockGHz}GHz`);
-  normalEvidence.push(...stress.evidence);
+  normalEvidence.push(...stress.evidence, ...base.evidence);
 
   return finalize('CPU', issues, null, normalEvidence);
 }
 
-function evaluateMemory(mem, topProcesses, ramTest) {
+function evaluateMemory(mem, topProcesses, ramTest, baselineComparison) {
   const ram = ramTestFindings(ramTest);
-  const issues = [...ram.issues];
+  const base = baselineFindings(baselineComparison, 'RAM');
+  const issues = [...ram.issues, ...base.issues];
   if (mem.usedPercent >= 90) {
     const issue = mkIssue('warning', '메모리 사용량이 한계에 가깝습니다',
       `전체 ${mem.totalGB}GB 중 ${mem.usedGB}GB(${mem.usedPercent}%)가 사용 중입니다. 아래 프로세스가 메모리를 많이 점유하고 있습니다.`,
@@ -107,7 +111,7 @@ function evaluateMemory(mem, topProcesses, ramTest) {
       70, [`스왑 ${mem.swapUsedGB}GB / ${mem.swapTotalGB}GB 사용 중`],
       '재부팅 후 동일 작업을 반복하며 스왑 사용량 추이를 다시 확인하세요.'));
   }
-  const normalEvidence = [`사용률 ${mem.usedPercent}%`, `가용 메모리 ${mem.availableGB}GB / 전체 ${mem.totalGB}GB`, ...ram.evidence];
+  const normalEvidence = [`사용률 ${mem.usedPercent}%`, `가용 메모리 ${mem.availableGB}GB / 전체 ${mem.totalGB}GB`, ...ram.evidence, ...base.evidence];
   return finalize('RAM', issues, null, normalEvidence);
 }
 
@@ -212,11 +216,12 @@ function gpuStressFindings(stressCheck) {
 function evaluateGpu(gpu, trend, checks = {}) {
   const vram = vramCheckFindings(checks.vramCheck);
   const stress = gpuStressFindings(checks.gpuStressCheck);
-  const issues = [...vram.issues, ...stress.issues];
+  const base = baselineFindings(checks.baselineComparison, 'GPU');
+  const issues = [...vram.issues, ...stress.issues, ...base.issues];
   if (!gpu.supported) {
     const models = (gpu.controllers || []).map((c) => c.model).filter(Boolean).join(', ');
     return finalize('GPU', issues, 'NVIDIA GPU가 아니거나 nvidia-smi를 찾을 수 없어 실시간 로드/온도 진단은 건너뛰었습니다. (VRAM·모델 정보만 표시)',
-      [...(models ? [`인식된 GPU: ${models}`] : []), ...vram.evidence, ...stress.evidence]);
+      [...(models ? [`인식된 GPU: ${models}`] : []), ...vram.evidence, ...stress.evidence, ...base.evidence]);
   }
   const nv = gpu.nvidia;
   if (nv.tempC >= 90) {
@@ -264,8 +269,98 @@ function evaluateGpu(gpu, trend, checks = {}) {
       72, [`VRAM 사용률 ${Math.round((nv.vramUsedMB / nv.vramTotalMB) * 100)}%`],
       '그래픽 옵션을 낮춘 뒤 같은 장면에서 VRAM 사용률을 다시 확인하세요.'));
   }
-  const normalEvidence = [`온도 ${nv.tempC}°C`, `부하 ${nv.loadPercent}%`, `클럭 ${nv.clockMHz}MHz`, `VRAM ${nv.vramUsedMB}/${nv.vramTotalMB}MB`, ...vram.evidence, ...stress.evidence];
+  const normalEvidence = [`온도 ${nv.tempC}°C`, `부하 ${nv.loadPercent}%`, `클럭 ${nv.clockMHz}MHz`, `VRAM ${nv.vramUsedMB}/${nv.vramTotalMB}MB`, ...vram.evidence, ...stress.evidence, ...base.evidence];
   return finalize('GPU', issues, null, normalEvidence);
+}
+
+// ---------- 기준선(평소 상태) 대비 변화 → 진단 ----------
+// 판정(어느 정도 차이를 watch/warning으로 볼지)은 baseline.js의 compareToBaseline이 이미
+// 끝냈다. 여기서는 그 결과를 사람이 읽을 문장으로 옮기기만 한다 — 임계값을 여기서 다시
+// 구현하면 두 곳이 어긋난다(VRAM·GPU 부하 검사와 같은 원칙).
+//
+// 이 진단이 특히 조심해야 하는 것: 온도 차이의 원인이 하드웨어가 아닐 수 있다는 점이다.
+// 실내 온도(계절), 직전 작업의 잔열이 모두 같은 모양의 신호를 만든다. 그래서 원인 후보의
+// 맨 앞에 그것들을 적고, confidence를 60 이상으로 올리지 않는다.
+function baselineFindings(comparison, section) {
+  const issues = [];
+  const evidence = [];
+  if (!comparison) return { issues, evidence };
+
+  if (!comparison.available) {
+    // 기준선이 없거나 쓸 수 없는 상태. CPU 섹션에서 한 번만 알린다(세 섹션에서 반복하면 시끄럽다).
+    if (section === 'CPU') {
+      if (comparison.reason === 'hardware-changed') {
+        evidence.push(`기준선은 다른 CPU(${comparison.changedFrom})에서 측정된 것이라 비교하지 않았습니다`);
+      } else if (comparison.reason === 'no-baseline') {
+        evidence.push('평소 상태 기준선이 아직 없어 "평소 대비" 비교는 하지 않았습니다');
+      }
+    }
+    return { issues, evidence };
+  }
+
+  const ageText = comparison.ageDays === 0 ? '오늘' : `${comparison.ageDays}일 전`;
+  const deltas = deltasForSection(comparison, section);
+
+  deltas.forEach((d) => {
+    if (d.skipped === 'not-idle') {
+      // 부하 중에는 유휴 기준선과 비교할 수 없다. 정상이라고도, 이상이라고도 하지 않는다.
+      const gateLabel = d.section === 'GPU' ? `GPU 부하 ${IDLE_GPU_LOAD_MAX}%` : `CPU 부하 ${IDLE_CPU_LOAD_MAX}%`;
+      evidence.push(`${d.label}: 지금은 부하가 걸린 상태(${gateLabel} 초과)라 평소(유휴) 기준선과 비교하지 않았습니다`);
+      return;
+    }
+    if (d.skipped === 'gpu-changed') {
+      evidence.push(`${d.label}: 기준선 측정 이후 GPU가 바뀌어 비교하지 않았습니다`);
+      return;
+    }
+
+    const sign = d.diff > 0 ? '+' : '';
+    const line = `${d.label} ${d.currentVal}${d.unit} (평소 ${d.baselineVal}${d.unit}, ${sign}${d.diff}${d.unit} · 기준선 ${ageText})`;
+
+    if (d.level === 'normal') {
+      evidence.push(line);
+      return;
+    }
+
+    const isTemp = d.unit === '°C';
+    const confidence = d.level === 'warning' ? (comparison.stale ? 45 : 60) : 40;
+    const ev = [
+      `기준선 ${d.baselineVal}${d.unit} (${ageText} 측정, 샘플 ${comparison.sampleCount ?? '?'}개)`,
+      `현재 ${d.currentVal}${d.unit}`,
+      `차이 ${sign}${d.diff}${d.unit}`,
+      '유휴 상태끼리 비교한 값입니다',
+    ];
+    if (comparison.stale) ev.push(`기준선이 ${comparison.ageDays}일 전 값이라 그동안 실내 온도가 달라졌을 수 있습니다 — 판단 근거를 약하게 봅니다`);
+    if (d.level === 'watch') ev.push('실내 온도 변화만으로도 설명될 수 있는 범위 — 단정하지 않고 지켜봅니다');
+
+    if (isTemp) {
+      issues.push(mkIssue(d.level, `${d.label}가 평소보다 높습니다`,
+        `이 PC의 평소 ${d.label}는 ${d.baselineVal}${d.unit}였는데 지금은 ${d.currentVal}${d.unit}로 ${d.diff}${d.unit} 높습니다. 절대 온도로는 아직 위험 범위가 아니지만, 같은 PC의 평소와 달라졌다는 점이 냉각 성능 저하의 신호일 수 있습니다.`,
+        [
+          '기준선 측정 때보다 실내 온도가 높음(계절·냉방 여부)',
+          '직전까지 고부하 작업을 해서 잔열이 남아 있음',
+          '방열판·팬에 먼지가 쌓여 냉각 성능이 떨어짐',
+          '서멀 그리스 열화 또는 쿨러 장착 상태 변화',
+        ],
+        [
+          '몇 분간 아무 작업도 하지 않은 뒤 다시 진단해 잔열 영향을 배제하세요',
+          '케이스를 열어 방열판·팬 먼지를 제거한 뒤 다시 진단하세요',
+          '실내 온도가 기준선 측정 때와 크게 다르다면 기준선을 다시 측정하세요',
+        ],
+        confidence, ev,
+        '먼지 제거 후 PC를 몇 분 유휴 상태로 둔 다음 전체 진단을 다시 실행해 평소 대비 차이가 줄었는지 확인하세요.'));
+    } else {
+      issues.push(mkIssue(d.level, `${d.label}이 평소보다 높습니다`,
+        `이 PC의 평소 ${d.label}은 ${d.baselineVal}${d.unit}였는데 지금은 ${d.currentVal}${d.unit}입니다. 같은 유휴 상태인데도 ${d.diff}${d.unit} 더 쓰고 있습니다.`,
+        ['시작 프로그램·백그라운드 상주 프로그램이 늘어남', '메모리를 반환하지 않는 프로그램이 실행 중', '기준선 측정 이후 설치한 프로그램의 상주 서비스'],
+        ['작업 관리자 → 시작 프로그램에서 불필요한 항목 비활성화', '메모리 점유가 큰 상주 프로그램 확인 후 종료', '정리 후 기준선을 다시 측정해 새 평소 상태를 기록'],
+        confidence, ev,
+        '상주 프로그램을 정리하고 재부팅한 뒤 전체 진단을 다시 실행해 유휴 사용률이 기준선에 가까워졌는지 확인하세요.'));
+    }
+  });
+
+  if (comparison.gpuNote && section === 'GPU') evidence.push(comparison.gpuNote);
+
+  return { issues, evidence };
 }
 
 // ---------- 부하 테스트(정밀 검사) 결과 → 진단 ----------
@@ -985,15 +1080,34 @@ function applyCorrelations(sections) {
 }
 
 // ---------- 통합 ----------
-function buildReport({ cpu, cpuTrend, memory, gpu, gpuTrend, storage, network, display, visualChecks, vramCheck, gpuStressCheck, deepTests, system, symptom, topProcesses, eventLog }) {
+function buildReport({ cpu, cpuTrend, memory, gpu, gpuTrend, storage, network, display, visualChecks, vramCheck, gpuStressCheck, baseline, baselineSnapshot, deepTests, system, symptom, topProcesses, eventLog }) {
   // 정밀 검사(부하 테스트)를 돌렸다면 그 결과도 규칙 엔진에 넣는다. 이게 빠져 있으면
   // "RAM 검사에서 오류가 났는데 최종 등급은 정상"이라는 최악의 상황이 생긴다.
   const dt = deepTests && deepTests.included ? deepTests : {};
 
+  // 기준선 비교는 여기서 딱 한 번 만든다. 호출부(main.js)에서 만들어 넘기지 않는 이유는,
+  // SMART 재검사처럼 raw로 리포트를 다시 만드는 경로에서 비교 결과만 예전 값으로 남는
+  // 어긋남을 원천적으로 막기 위해서다. 지금 측정값과 항상 같이 계산된다.
+  //
+  // ⚠ 비교에 쓰는 "지금 값"은 진단 본작업 전에 뜬 스냅샷(baselineSnapshot)이 있으면 그걸 쓴다.
+  //    본작업 중 값을 쓰면 앱 자신의 부하(실측 36%)가 섞여 매번 "부하 중이라 비교 불가"가 된다.
+  //    기준선이 유휴 상태에서 만들어졌으니 비교 대상도 같은 조건이어야 공정하다.
+  //    (collectors.collectIdleSnapshot 주석 참고)
+  const snap = baselineSnapshot || null;
+  const baselineComparison = compareToBaseline(baseline, {
+    cpuModel: cpu ? cpu.model : null,
+    gpuModel: (gpu && gpu.controllers && gpu.controllers[0] && gpu.controllers[0].model) || null,
+    cpu: snap && snap.cpu ? { loadPercent: snap.cpu.loadPercent, tempC: snap.cpu.tempC }
+      : (cpu ? { loadPercent: cpu.loadPercent, tempC: cpu.tempC } : null),
+    gpu: snap && snap.gpu ? { loadPercent: snap.gpu.loadPercent, tempC: snap.gpu.tempC }
+      : (gpu && gpu.nvidia ? { loadPercent: gpu.nvidia.loadPercent, tempC: gpu.nvidia.tempC } : null),
+    memUsedPercent: snap && snap.ram ? snap.ram.usedPercent : (memory ? memory.usedPercent : null),
+  });
+
   let sections = [
-    evaluateCpu(cpu, cpuTrend, topProcesses, dt.cpuStress),
-    evaluateMemory(memory, topProcesses, dt.ramTest),
-    evaluateGpu(gpu, gpuTrend, { vramCheck, gpuStressCheck }),
+    evaluateCpu(cpu, cpuTrend, topProcesses, dt.cpuStress, baselineComparison),
+    evaluateMemory(memory, topProcesses, dt.ramTest, baselineComparison),
+    evaluateGpu(gpu, gpuTrend, { vramCheck, gpuStressCheck, baselineComparison }),
     evaluateStorage(storage, dt.storageTest),
     evaluateNetwork(network),
     evaluateDisplay(display, visualChecks),
@@ -1035,6 +1149,9 @@ function buildReport({ cpu, cpuTrend, memory, gpu, gpuTrend, storage, network, d
     sections,
     symptom: symptom || 'full',
     symptomLabel: SYMPTOM_LABEL[symptom] || SYMPTOM_LABEL.full,
+    // 화면에서 "평소 대비" 표를 그리는 데 쓴다. 판정은 이미 섹션 이슈에 반영돼 있고
+    // 여기 있는 건 같은 데이터의 표시용 사본이다(여기서 다시 판정하면 안 된다).
+    baseline: baselineComparison,
     timestamp: new Date().toISOString(),
   };
 }

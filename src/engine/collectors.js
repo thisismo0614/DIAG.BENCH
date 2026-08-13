@@ -373,6 +373,22 @@ async function collectLiveSample() {
   };
 }
 
+// ---------- 기준선 비교용 사전 스냅샷 ----------
+// 기준선(평소 상태) 비교는 "지금이 유휴인가"에 전적으로 의존한다. 그런데 진단 본작업이
+// 시작되면 **이 앱 자신이** PowerShell·nvidia-smi·SMART 조회를 돌리느라 CPU를 크게 쓴다.
+// 실측: 4코어 Xeon E3-1230 v5에서 진단 중 CPU 부하 36% — 유휴 판정 기준(20%)을 훌쩍 넘는다.
+// 그 값으로 판단하면 진단할 때마다 "지금은 부하 중이라 비교 못 함"이 되어 기능이 사실상
+// 동작하지 않는다.
+//
+// 그래서 본작업을 시작하기 **전에** 조용한 상태를 한 번 뜬다. si.currentLoad()는 이전 호출
+// 이후의 차분이라 첫 호출은 부팅 이후 평균이 섞여 나오므로, 기준점을 한 번 잡아 버리고
+// 짧은 간격 뒤의 값을 쓴다.
+async function collectIdleSnapshot(gapMs = 700) {
+  await si.currentLoad();   // 기준점만 잡고 값은 버린다
+  await new Promise((r) => setTimeout(r, gapMs));
+  return collectLiveSample();
+}
+
 // GPU 트렌드 감지를 위해 짧은 간격으로 N번 샘플링 (스로틀링 판정에 사용)
 async function sampleGpuTrend(samples = 4, intervalMs = 800) {
   const out = [];
@@ -702,6 +718,7 @@ function sleep(ms) {
 
 module.exports = {
   collectCpu,
+  collectIdleSnapshot,
   sampleCpuTrend,
   collectMemory,
   collectGpu,

@@ -18,6 +18,15 @@ contextBridge.exposeInMainWorld('diagAPI', {
   getGpuStressCheck: () => ipcRenderer.invoke('get-gpu-stress-check'),
   saveGpuStressCheck: (payload) => ipcRenderer.invoke('save-gpu-stress-check', payload),
 
+  getBaseline: () => ipcRenderer.invoke('get-baseline'),
+  captureBaseline: () => ipcRenderer.invoke('capture-baseline'),
+  clearBaseline: () => ipcRenderer.invoke('clear-baseline'),
+  getBaselineCapturePlan: () => ipcRenderer.invoke('get-baseline-capture-plan'),
+  onBaselineProgress: (callback) => {
+    ipcRenderer.removeAllListeners('baseline-progress');
+    ipcRenderer.on('baseline-progress', (_e, data) => callback(data));
+  },
+
   startLiveMonitor: () => ipcRenderer.send('start-live-monitor'),
   stopLiveMonitor: () => ipcRenderer.send('stop-live-monitor'),
   onLiveSample: (callback) => {

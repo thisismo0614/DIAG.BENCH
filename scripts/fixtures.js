@@ -79,6 +79,19 @@ const passingDeepTests = {
   included: true, cpuStress: passingCpuStress, storageTest: passingStorageTest, ramTest: passingRamTest,
 };
 
+// "이 PC의 평소 유휴 상태" 기준선. base()의 cpu.model과 같아야 한다 —
+// 다르면 다른 PC의 기준선으로 보고 비교 자체를 건너뛴다.
+function idleBaseline(over = {}) {
+  return {
+    cpuModel: 'Test CPU', gpuModel: 'Test GPU',
+    sampleCount: 12, idleSampleCount: 12, durationSec: 17,
+    cpuIdleTempC: 44, cpuIdleLoadPercent: 5, cpuIdleClockGHz: 1.2, cpuIdleTempSpreadC: 2,
+    gpuIdleTempC: 38, gpuIdleLoadPercent: 2, memIdleUsedPercent: 25, gpuNote: null,
+    checkedAt: '2026-08-12T10:00:00Z',
+    ...over,
+  };
+}
+
 const FIXTURES = {
   // 완전 정상 — 기본 검사만
   'normal-pc': {
@@ -182,6 +195,29 @@ const FIXTURES = {
       },
     }),
     expect: { grade: 'C', categoryWithIssue: 'GPU', correlated: true },
+  },
+
+  // 기준선 대비 유휴 온도 상승 — 절대 임계값으로는 절대 안 잡히는 케이스.
+  // 60°C는 어떤 CPU에서도 정상 범위라 절대 규칙(85/95°C)은 전부 통과한다.
+  // "이 PC는 평소 44°C였다"는 정보가 있을 때만 드러난다.
+  'baseline-idle-temp-rise': {
+    description: '유휴 온도가 평소(44°C)보다 16°C 높음. 절대 임계값으로는 안 잡히는 냉각 성능 저하',
+    input: base({
+      cpu: { model: 'Test CPU', loadPercent: 6, tempC: 60, clockGHz: 1.2 },
+      baseline: idleBaseline(),
+    }),
+    expect: { grade: 'C', categoryWithIssue: 'CPU' },
+  },
+
+  // ⚠ 위 기능이 가장 쉽게 오탐을 내는 자리.
+  // 부하 중에는 유휴 기준선과 비교하면 안 된다. 비교하면 게임 중 진단이 매번 경고를 뱉는다.
+  'baseline-under-load-no-false-alarm': {
+    description: '같은 기준선이 있어도 부하 중(92%)이면 평소 대비 비교를 하지 않아 정상이어야 한다',
+    input: base({
+      cpu: { model: 'Test CPU', loadPercent: 92, tempC: 74, clockGHz: 4.5 },
+      baseline: idleBaseline(),
+    }),
+    expect: { grade: 'A', normalAreasInclude: ['CPU'] },
   },
 
   // SMART 실패

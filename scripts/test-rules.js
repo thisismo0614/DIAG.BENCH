@@ -6,6 +6,7 @@
 const assert = require('assert');
 const { buildReport } = require('../src/engine/rules');
 const { buildComparison } = require('../src/engine/compare');
+const { summarizeBaselineSamples, compareToBaseline } = require('../src/engine/baseline');
 const { buildInspectionReport } = require('../src/engine/inspectionReport');
 
 let passed = 0;
@@ -1248,6 +1249,259 @@ test('대기 중 섹터 + 디스크 오류 이벤트는 서로 근거로 보강�
   }));
   const issue = findSection(r, 'STORAGE').issues.find((i) => i.title.includes('읽기에 실패한 섹터'));
   assert.ok(issue.confidence > 78, `상관관계로 신뢰도가 올라야 함(원래 78): ${issue.confidence}`);
+});
+
+// ============================================================
+section('기준선(평소 상태) — 기준선 만들기');
+// ============================================================
+
+// 기준선 측정은 collectLiveSample() 결과를 모은 것이다. 그 모양 그대로 만든다.
+function liveSample({ cpuLoad = 5, cpuTemp = 44, clock = 1.2, gpuLoad = 2, gpuTemp = 38, mem = 30, t = 0 }) {
+  return {
+    t: 1_700_000_000_000 + t * 1500,
+    cpu: { loadPercent: cpuLoad, tempC: cpuTemp, clockGHz: clock },
+    gpu: gpuLoad === null ? null : { loadPercent: gpuLoad, tempC: gpuTemp, clockMHz: 300, vramUsedMB: 500, vramTotalMB: 8192 },
+    ram: { usedPercent: mem },
+  };
+}
+function idleSamples(n = 12, over = {}) {
+  return Array.from({ length: n }, (_, i) => liveSample({ ...over, t: i }));
+}
+
+test('유휴 샘플만 모이면 기준선을 만든다 (중앙값)', () => {
+  const s = summarizeBaselineSamples(idleSamples(12), { cpuModel: 'Test CPU', gpuModel: 'Test GPU' });
+  assert.strictEqual(s.verdict, 'ok');
+  assert.strictEqual(s.record.cpuIdleTempC, 44);
+  assert.strictEqual(s.record.gpuIdleTempC, 38);
+  assert.strictEqual(s.record.memIdleUsedPercent, 30);
+  assert.strictEqual(s.record.cpuModel, 'Test CPU');
+});
+
+test('[핵심] 측정 중 부하가 걸려 있으면 기준선으로 저장하지 않는다', () => {
+  // 이걸 저장해버리면 "평소 온도 78°C"가 되어 이후 모든 진단이 조용히 틀린다.
+  const busy = Array.from({ length: 12 }, (_, i) => liveSample({ cpuLoad: 85, cpuTemp: 78, t: i }));
+  const s = summarizeBaselineSamples(busy, {});
+  assert.strictEqual(s.verdict, 'not-idle');
+  assert.strictEqual(s.record, null, '부하 상태인데 record가 만들어지면 안 됨');
+  assert.ok(s.reason.includes('85'), '왜 거부됐는지 실제 부하 값을 알려줘야 함');
+});
+
+test('일부만 부하여도 유휴 비율이 기준 미만이면 거부한다', () => {
+  const mixed = [
+    ...Array.from({ length: 5 }, (_, i) => liveSample({ t: i })),
+    ...Array.from({ length: 7 }, (_, i) => liveSample({ cpuLoad: 70, cpuTemp: 70, t: 5 + i })),
+  ];
+  assert.strictEqual(summarizeBaselineSamples(mixed, {}).verdict, 'not-idle');
+});
+
+test('스파이크가 한두 개 섞인 정도는 기준선으로 인정하되 그 샘플은 뺀다', () => {
+  const mostlyIdle = [
+    ...Array.from({ length: 10 }, (_, i) => liveSample({ t: i })),
+    liveSample({ cpuLoad: 90, cpuTemp: 80, t: 10 }),
+    liveSample({ cpuLoad: 88, cpuTemp: 79, t: 11 }),
+  ];
+  const s = summarizeBaselineSamples(mostlyIdle, {});
+  assert.strictEqual(s.verdict, 'ok');
+  assert.strictEqual(s.record.idleSampleCount, 10);
+  assert.strictEqual(s.record.cpuIdleTempC, 44, '부하 샘플이 중앙값에 섞이면 안 됨');
+});
+
+test('샘플이 너무 적으면 기준선을 만들지 않는다', () => {
+  const s = summarizeBaselineSamples(idleSamples(3), {});
+  assert.strictEqual(s.verdict, 'insufficient-samples');
+  assert.strictEqual(s.record, null);
+});
+
+test('GPU가 유휴가 아니면 GPU 기준선만 비우고 CPU 기준선은 살린다', () => {
+  const s = summarizeBaselineSamples(idleSamples(12, { gpuLoad: 75, gpuTemp: 70 }), {});
+  assert.strictEqual(s.verdict, 'ok');
+  assert.strictEqual(s.record.cpuIdleTempC, 44, 'CPU 기준선까지 버리면 안 됨');
+  assert.strictEqual(s.record.gpuIdleTempC, null);
+  assert.ok(s.record.gpuNote, 'GPU 기준선을 왜 안 만들었는지 남겨야 함');
+});
+
+test('GPU 값을 읽을 수 없어도(비NVIDIA) CPU 기준선은 만들어진다', () => {
+  const s = summarizeBaselineSamples(idleSamples(12, { gpuLoad: null }), {});
+  assert.strictEqual(s.verdict, 'ok');
+  assert.strictEqual(s.record.gpuIdleTempC, null);
+  assert.ok(s.record.gpuNote.includes('nvidia-smi'));
+});
+
+// ============================================================
+section('기준선(평소 상태) — 지금 값과 비교');
+// ============================================================
+
+function baselineRecord(over = {}) {
+  return {
+    cpuModel: 'Test CPU', gpuModel: 'Test GPU',
+    sampleCount: 12, idleSampleCount: 12, durationSec: 17,
+    cpuIdleTempC: 44, cpuIdleLoadPercent: 5, cpuIdleClockGHz: 1.2, cpuIdleTempSpreadC: 2,
+    gpuIdleTempC: 38, gpuIdleLoadPercent: 2, memIdleUsedPercent: 30, gpuNote: null,
+    checkedAt: new Date(Date.now() - 10 * 86400000).toISOString(),
+    ...over,
+  };
+}
+function nowState(over = {}) {
+  return {
+    cpuModel: 'Test CPU', gpuModel: 'Test GPU',
+    cpu: { loadPercent: 6, tempC: 46 },
+    gpu: { loadPercent: 3, tempC: 39 },
+    memUsedPercent: 31,
+    ...over,
+  };
+}
+const deltaOf = (c, key) => c.deltas.find((d) => d.key === key);
+
+test('기준선이 없으면 비교하지 않는다', () => {
+  const c = compareToBaseline(null, nowState());
+  assert.strictEqual(c.available, false);
+  assert.strictEqual(c.reason, 'no-baseline');
+});
+
+test('평소와 비슷하면 아무 등급도 올리지 않는다', () => {
+  const c = compareToBaseline(baselineRecord(), nowState());
+  assert.ok(c.available);
+  assert.ok(c.deltas.every((d) => d.level === 'normal'));
+});
+
+test('유휴 온도가 평소보다 10°C 높으면 watch', () => {
+  const c = compareToBaseline(baselineRecord(), nowState({ cpu: { loadPercent: 6, tempC: 54 } }));
+  assert.strictEqual(deltaOf(c, 'cpuIdleTempC').level, 'watch');
+});
+
+test('유휴 온도가 평소보다 15°C 높으면 warning', () => {
+  const c = compareToBaseline(baselineRecord(), nowState({ cpu: { loadPercent: 6, tempC: 59 } }));
+  const d = deltaOf(c, 'cpuIdleTempC');
+  assert.strictEqual(d.level, 'warning');
+  assert.strictEqual(d.diff, 15);
+});
+
+test('평소보다 낮아진 것은 등급을 올리지 않는다', () => {
+  const c = compareToBaseline(baselineRecord(), nowState({ cpu: { loadPercent: 6, tempC: 30 } }));
+  assert.strictEqual(deltaOf(c, 'cpuIdleTempC').level, 'normal');
+});
+
+test('[핵심] 지금 부하가 걸려 있으면 유휴 기준선과 비교하지 않는다', () => {
+  // 이 가드가 없으면 게임 중 진단은 무조건 "평소보다 30°C 높음"이 되어 100% 오탐이 난다.
+  const c = compareToBaseline(baselineRecord(), nowState({ cpu: { loadPercent: 92, tempC: 78 } }));
+  const d = deltaOf(c, 'cpuIdleTempC');
+  assert.strictEqual(d.skipped, 'not-idle');
+  assert.strictEqual(d.level, 'normal');
+  assert.strictEqual(d.diff, null, '비교하지 않았으면 차이를 계산해서도 안 됨');
+});
+
+test('GPU만 부하 중이면 GPU 항목만 건너뛰고 CPU는 비교한다', () => {
+  const c = compareToBaseline(baselineRecord(), nowState({ gpu: { loadPercent: 99, tempC: 72 }, cpu: { loadPercent: 6, tempC: 60 } }));
+  assert.strictEqual(deltaOf(c, 'gpuIdleTempC').skipped, 'not-idle');
+  assert.strictEqual(deltaOf(c, 'cpuIdleTempC').level, 'warning');
+});
+
+test('CPU가 바뀌었으면 기준선 전체를 쓰지 않는다', () => {
+  const c = compareToBaseline(baselineRecord(), nowState({ cpuModel: 'Another CPU', cpu: { loadPercent: 6, tempC: 70 } }));
+  assert.strictEqual(c.available, false);
+  assert.strictEqual(c.reason, 'hardware-changed');
+  assert.strictEqual(c.deltas.length, 0);
+});
+
+test('GPU만 바뀌었으면 GPU 항목만 건너뛰고 CPU 비교는 유지한다', () => {
+  const c = compareToBaseline(baselineRecord(), nowState({ gpuModel: 'New GPU', cpu: { loadPercent: 6, tempC: 60 } }));
+  assert.ok(c.available);
+  assert.strictEqual(deltaOf(c, 'gpuIdleTempC').skipped, 'gpu-changed');
+  assert.strictEqual(deltaOf(c, 'cpuIdleTempC').level, 'warning');
+});
+
+test('오래된 기준선은 버리지 않고 stale로 표시한다', () => {
+  // 버리면 정작 "몇 달에 걸쳐 나빠지는 변화"를 못 잡는다.
+  const old = baselineRecord({ checkedAt: new Date(Date.now() - 200 * 86400000).toISOString() });
+  const c = compareToBaseline(old, nowState({ cpu: { loadPercent: 6, tempC: 60 } }));
+  assert.strictEqual(c.stale, true);
+  assert.strictEqual(c.ageDays, 200);
+  assert.strictEqual(deltaOf(c, 'cpuIdleTempC').level, 'warning');
+});
+
+test('기준선에 GPU 값이 없으면 GPU 항목은 비교 대상에 들어가지 않는다', () => {
+  const c = compareToBaseline(baselineRecord({ gpuIdleTempC: null }), nowState());
+  assert.strictEqual(deltaOf(c, 'gpuIdleTempC'), undefined);
+});
+
+// ============================================================
+section('기준선(평소 상태) — 진단 엔진 연동');
+// ============================================================
+
+test('[회귀 방지] 기준선이 buildReport에 전달되지 않으면 즉시 드러난다', () => {
+  // deepTests가 buildReport에 안 넘어가서 "RAM 오류인데 등급 정상"이 났던 것과 같은 유형의 회귀.
+  // 기준선을 넘겼는데 CPU 섹션이 normal이면 어딘가에서 값이 끊긴 것이다.
+  const r = buildReport(baseInput({
+    cpu: { model: 'Test CPU', loadPercent: 6, tempC: 60, clockGHz: 1.2 },
+    baseline: baselineRecord(),
+  }));
+  assert.notStrictEqual(findSection(r, 'CPU').status, 'normal',
+    '기준선 대비 +16°C인데 CPU가 normal이면 기준선이 규칙 엔진까지 도달하지 못한 것');
+});
+
+test('유휴 온도가 평소보다 크게 높으면 CPU warning 이슈가 생긴다', () => {
+  const r = buildReport(baseInput({
+    cpu: { model: 'Test CPU', loadPercent: 6, tempC: 60, clockGHz: 1.2 },
+    baseline: baselineRecord(),
+  }));
+  const issue = findSection(r, 'CPU').issues.find((i) => i.title.includes('평소보다'));
+  assert.ok(issue, '평소 대비 이슈가 있어야 함');
+  assert.strictEqual(issue.level, 'warning');
+  assert.ok(issue.evidence.some((e) => e.includes('44')), '기준선 값이 근거에 있어야 함');
+  assert.ok(issue.evidence.some((e) => e.includes('60')), '현재 값이 근거에 있어야 함');
+});
+
+test('원인 후보에 실내 온도·잔열을 하드웨어 고장보다 먼저 적는다', () => {
+  // 온도 상승의 가장 흔한 원인은 계절과 잔열이다. 그걸 빼고 "쿨러 고장"부터 말하면 과잉 경고다.
+  const r = buildReport(baseInput({
+    cpu: { model: 'Test CPU', loadPercent: 6, tempC: 60, clockGHz: 1.2 },
+    baseline: baselineRecord(),
+  }));
+  const issue = findSection(r, 'CPU').issues.find((i) => i.title.includes('평소보다'));
+  assert.ok(issue.causes[0].includes('실내 온도'), `첫 원인 후보가 실내 온도여야 함: ${issue.causes[0]}`);
+  assert.ok(issue.confidence <= 60, `확정할 수 없는 판정이라 confidence를 60 이하로: ${issue.confidence}`);
+});
+
+test('기준선 대비 정상이면 근거 줄에 평소 값을 남긴다', () => {
+  const r = buildReport(baseInput({ cpu: { model: 'Test CPU', loadPercent: 6, tempC: 46, clockGHz: 1.2 }, baseline: baselineRecord() }));
+  const cpu = findSection(r, 'CPU');
+  assert.strictEqual(cpu.status, 'normal');
+  assert.ok(cpu.normalEvidence.some((e) => e.includes('평소')), '정상 판정도 평소 대비 근거를 남겨야 함');
+});
+
+test('[핵심] 부하 중 진단은 기준선 때문에 등급이 올라가지 않는다', () => {
+  // 게임 중 진단할 때마다 "평소보다 뜨겁다"고 하면 이 기능은 쓸모없는 소음이 된다.
+  const r = buildReport(baseInput({
+    cpu: { model: 'Test CPU', loadPercent: 92, tempC: 74, clockGHz: 4.5 },
+    baseline: baselineRecord(),
+  }));
+  const cpu = findSection(r, 'CPU');
+  assert.ok(!cpu.issues.some((i) => i.title.includes('평소보다')), '부하 중에는 평소 대비 이슈를 만들면 안 됨');
+});
+
+test('기준선이 없으면 기존 진단 결과가 달라지지 않는다', () => {
+  const withNothing = buildReport(baseInput());
+  const withNull = buildReport(baseInput({ baseline: null }));
+  assert.strictEqual(withNothing.totalWarnings, withNull.totalWarnings);
+  assert.strictEqual(findSection(withNull, 'CPU').status, 'normal');
+});
+
+test('유휴 메모리 사용률이 평소보다 크게 높으면 RAM watch', () => {
+  const r = buildReport(baseInput({
+    cpu: { model: 'Test CPU', loadPercent: 6, tempC: 46, clockGHz: 1.2 },
+    memory: { totalGB: 16, usedGB: 9, availableGB: 7, usedPercent: 55, swapUsedGB: 0, swapTotalGB: 0 },
+    baseline: baselineRecord(),
+  }));
+  const ram = findSection(r, 'RAM');
+  assert.strictEqual(ram.status, 'watch');
+  assert.ok(ram.issues.some((i) => i.title.includes('평소보다')));
+});
+
+test('리포트에 기준선 비교 결과가 표시용으로 실린다', () => {
+  const r = buildReport(baseInput({ cpu: { model: 'Test CPU', loadPercent: 6, tempC: 46, clockGHz: 1.2 }, baseline: baselineRecord() }));
+  assert.ok(r.baseline, 'report.baseline이 있어야 화면에서 표를 그릴 수 있다');
+  assert.strictEqual(r.baseline.available, true);
+  assert.strictEqual(r.baseline.ageDays, 10);
 });
 
 // ============================================================

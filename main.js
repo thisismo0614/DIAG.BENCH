@@ -7,6 +7,8 @@ const history = require('./src/engine/history');
 const displayChecks = require('./src/engine/displayChecks');
 const vramChecks = require('./src/engine/vramChecks');
 const gpuStressChecks = require('./src/engine/gpuStressChecks');
+const baselineStore = require('./src/engine/baselineStore');
+const { summarizeBaselineSamples, MIN_SAMPLES } = require('./src/engine/baseline');
 const { buildComparison } = require('./src/engine/compare');
 const { buildHtmlReport } = require('./src/engine/report');
 const { buildInspectionReport } = require('./src/engine/inspectionReport');
@@ -50,6 +52,11 @@ app.on('window-all-closed', () => {
 // "부하가 걸린 상태에서의 추이"를 본다. 부하가 낮으면 스킵해서 진단 시간을 아낀다.
 ipcMain.handle('run-full-diagnostic', async (event, { symptom } = {}) => {
   const send = (stage) => event.sender.send('diagnostic-progress', stage);
+
+  // 기준선 비교용 스냅샷은 반드시 본작업 **전에** 뜬다. 본작업이 시작되면 이 앱 자신이
+  // CPU를 크게 쓰기 때문에(실측 36%) 그 값으로는 "지금 유휴인가"를 판단할 수 없다.
+  const baseline = baselineStore.activeBaseline(app.getPath('userData'));
+  const baselineSnapshot = baseline ? await collectors.collectIdleSnapshot() : null;
 
   send('cpu');
   const cpu = await collectors.collectCpu();
@@ -96,11 +103,11 @@ ipcMain.handle('run-full-diagnostic', async (event, { symptom } = {}) => {
   const visualChecks = displayChecks.activeDisplayChecks(app.getPath('userData'));
   const vramCheck = vramChecks.activeVramCheck(app.getPath('userData'));
   const gpuStressCheck = gpuStressChecks.activeGpuStressCheck(app.getPath('userData'));
-  const report = buildReport({ cpu, cpuTrend, memory, gpu, gpuTrend, storage, network, display, visualChecks, vramCheck, gpuStressCheck, system, symptom, topProcesses, eventLog });
+  const report = buildReport({ cpu, cpuTrend, memory, gpu, gpuTrend, storage, network, display, visualChecks, vramCheck, gpuStressCheck, baseline, baselineSnapshot, system, symptom, topProcesses, eventLog });
 
   // raw에도 넣어둔다 — SMART 재검사처럼 raw로 report를 다시 만드는 경로에서 빠지면
   // 정정 후 리포트에서만 VRAM 근거가 사라져 버린다.
-  const raw = { cpu, cpuTrend, memory, gpu, gpuTrend, storage, network, display, visualChecks, vramCheck, gpuStressCheck, system, topProcesses, eventLog };
+  const raw = { cpu, cpuTrend, memory, gpu, gpuTrend, storage, network, display, visualChecks, vramCheck, gpuStressCheck, baseline, baselineSnapshot, system, topProcesses, eventLog };
 
   // 진단 전/후 비교: 새 기록을 남기기 전에 "직전 기록"을 먼저 읽어와 비교한다.
   const prevHistory = history.loadHistory(app.getPath('userData'));
@@ -159,6 +166,76 @@ ipcMain.handle('get-gpu-stress-check', () => {
 ipcMain.handle('save-gpu-stress-check', (event, result = {}) => {
   return gpuStressChecks.saveGpuStressCheck(app.getPath('userData'), result);
 });
+
+// ================= 기준선(평소 상태) =================
+// VRAM/GPU 검사와 달리 이건 메인 프로세스에서 전부 돌린다 — 필요한 값(CPU/GPU 온도, 메모리)이
+// 전부 collectLiveSample()로 읽히고 WebGL 같은 렌더러 전용 API가 필요 없기 때문이다.
+//
+// ⚠ 측정 중 부하가 걸려 있으면 저장하지 않는다. 부하 상태를 "평소"로 굳혀버리면 이후 모든
+//   비교가 조용히 틀리게 된다 — 이 기능에서 가장 위험한 실패 방식이라 여기서 막는다.
+//   판정은 summarizeBaselineSamples 한 곳에서만 하고, 여기서는 그 verdict를 따른다.
+// 샘플 수·간격의 실측 근거:
+// 샘플 1회는 nvidia-smi 프로세스 스폰을 포함해 약 0.6초 걸린다. 간격이 짧으면 측정 루프가
+// CPU를 점유해서 "평소"가 아니라 "측정 중"을 재게 되므로 3초로 둔다. 이 PC에서 3초 간격의
+// 앱 내 유휴 부하는 중앙값 15%로 안정적이었다(맨 node로는 6.4% — 차이가 앱 자신의 몫이다).
+const BASELINE_CAPTURE = { samples: 10, intervalMs: 3000 };
+
+ipcMain.handle('capture-baseline', async (event) => {
+  const { samples: wanted, intervalMs } = BASELINE_CAPTURE;
+
+  // 하드웨어 지문. 나중에 CPU가 바뀌면 이 기준선은 다른 PC의 값이므로 비교하지 않는다.
+  const [cpuInfo, gpuInfo] = await Promise.all([collectors.collectCpu(), collectors.collectGpu()]);
+  const hardware = {
+    cpuModel: cpuInfo.model || null,
+    gpuModel: (gpuInfo.controllers && gpuInfo.controllers[0] && gpuInfo.controllers[0].model) || null,
+  };
+
+  // ⚠ 첫 샘플은 반드시 버린다 (실측으로 찾은 함정).
+  // si.currentLoad()는 "직전 호출 이후"의 평균을 돌려준다. 그래서 캡처를 시작하고 처음 읽는
+  // 값은 그 앞의 긴 공백(앱 기동·화면 전환 구간)을 통째로 포함해 크게 부풀려진다.
+  // 실측: 같은 조건에서 #0=46%, 이후 #1~#9=11~16%. 이 한 샘플 때문에 유휴 비율이 무너져
+  // 정상적인 유휴 PC에서도 측정이 절반쯤 거부됐다. 기준점만 잡고 값은 쓰지 않는다.
+  try { await collectors.collectLiveSample(); } catch { /* 기준점 잡기 실패는 무시 */ }
+  await new Promise((r) => setTimeout(r, intervalMs));
+
+  const samples = [];
+  for (let i = 0; i < wanted; i++) {
+    event.sender.send('baseline-progress', { done: i, total: wanted });
+    // 샘플 1회에 이 PC 기준 800ms~1.3초가 걸린다(nvidia-smi 프로세스 스폰 포함).
+    // 그 시간을 무시하고 intervalMs를 통째로 더 자면 실제 소요 시간이 안내한 값의 1.5배가 된다
+    // (실측: 안내 18초 → 실제 27.8초). 화면에 적은 시간과 실제가 달라지지 않도록 뺀 만큼만 잔다.
+    const startedAt = Date.now();
+    try {
+      samples.push(await collectors.collectLiveSample());
+    } catch {
+      // 한 샘플 실패는 치명적이지 않다. 부족하면 summarize가 'insufficient-samples'로 막는다.
+    }
+    if (i < wanted - 1) {
+      const rest = intervalMs - (Date.now() - startedAt);
+      if (rest > 0) await new Promise((r) => setTimeout(r, rest));
+    }
+  }
+  event.sender.send('baseline-progress', { done: wanted, total: wanted });
+
+  const summary = summarizeBaselineSamples(samples, hardware);
+  if (summary.verdict !== 'ok') return { ...summary, saved: false, baseline: null };
+
+  const saved = baselineStore.saveBaseline(app.getPath('userData'), summary.record);
+  return { ...summary, saved: true, baseline: saved };
+});
+
+ipcMain.handle('get-baseline', () => baselineStore.loadBaseline(app.getPath('userData')));
+ipcMain.handle('clear-baseline', () => {
+  baselineStore.clearBaseline(app.getPath('userData'));
+  return true;
+});
+// 버리는 첫 샘플까지 포함한 실제 소요 시간을 알려준다 — 화면에 적은 시간과 실제가
+// 다르면 그것 자체가 거짓 안내다(안내 18초 / 실제 27.8초였던 것을 실측으로 잡아 고쳤다).
+ipcMain.handle('get-baseline-capture-plan', () => ({
+  ...BASELINE_CAPTURE,
+  minSamples: MIN_SAMPLES,
+  estimatedSec: Math.round(((BASELINE_CAPTURE.samples + 1) * BASELINE_CAPTURE.intervalMs) / 1000),
+}));
 
 // ================= 실시간 모니터링 =================
 // 1초 간격으로 센서를 읽어 렌더러로 push한다. collectLiveSample() 한 번이 이 PC 기준
@@ -263,6 +340,10 @@ ipcMain.handle('get-stress-limits', () => stress.LIMITS);
 ipcMain.handle('run-inspection-scan', async (event, { includeDeepTests } = {}) => {
   const send = (stage) => event.sender.send('diagnostic-progress', stage);
 
+  // 전체 진단과 같은 이유로, 기준선 비교용 스냅샷은 본작업 전에 뜬다.
+  const baseline = baselineStore.activeBaseline(app.getPath('userData'));
+  const baselineSnapshot = baseline ? await collectors.collectIdleSnapshot() : null;
+
   send('cpu');
   const cpu = await collectors.collectCpu();
   send('memory');
@@ -300,7 +381,7 @@ ipcMain.handle('run-inspection-scan', async (event, { includeDeepTests } = {}) =
   const visualChecks = displayChecks.activeDisplayChecks(app.getPath('userData'));
   const vramCheck = vramChecks.activeVramCheck(app.getPath('userData'));
   const gpuStressCheck = gpuStressChecks.activeGpuStressCheck(app.getPath('userData'));
-  const raw = { cpu, memory, gpu, storage, network, display, visualChecks, vramCheck, gpuStressCheck, system, eventLog, deepTests };
+  const raw = { cpu, memory, gpu, storage, network, display, visualChecks, vramCheck, gpuStressCheck, baseline, baselineSnapshot, system, eventLog, deepTests };
   // deepTests를 반드시 함께 넘긴다. 이게 빠지면 정밀 검사에서 오류가 나도 규칙 엔진이
   // 그 사실을 아예 못 봐서 최종 등급이 "정상"으로 나온다.
   const diagnosisReport = buildReport({ ...raw, cpuTrend: null, gpuTrend: null, symptom: 'full' });

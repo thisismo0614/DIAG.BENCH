@@ -21,19 +21,26 @@ Windows PC의 하드웨어/시스템 상태를 진단하는 Electron 데스크�
 
 ## 2. ⚠️ 작업 환경에 대해 반드시 알아야 할 것
 
-### 🔴 다음 세션에서 가장 먼저 확인할 것 (2026-08-13 기준)
+### 🔴 다음 세션에서 가장 먼저 확인할 것 (2026-08-13 갱신)
 
-**push되지 않은 커밋이 1건 있다.**
+**배포 파이프라인은 실제로 끝까지 동작했다.** 이전 판(v0.17.0 시점)에 "미완료"로 적혀 있던
+것들은 그 뒤 전부 완료됐다 — 그 기록을 보고 다시 하려 들지 말 것.
 
-```
-6ed8762  ci: electron-builder의 암묵적 publish 비활성화   ← 로컬에만 있음
-b4cc2c8  ci: electron 바이너리 다운로드 실패에 재시도·캐시 적용   ← origin/main
-6fbfe5f  DIAG.BENCH v0.17.0
-```
+| 항목 | 상태 | 확인 방법 |
+|---|---|---|
+| `git push` | ✅ 완료 | `6ed8762`가 origin/main에 있음 |
+| 첫 릴리스 태그 | ✅ `v0.17.0` push됨 | `git ls-remote --tags origin` |
+| 릴리스 발행 | ✅ 성공 | exe 74.1MB + SHA256SUMS + GPL tarball 첨부됨 |
+| GitHub Pages | ✅ 라이브 | `https://thisismo0614.github.io/DIAG.BENCH/` HTTP 200 |
+| `OWNER` placeholder | ✅ 교체 완료 | 9장 참고 |
 
-사용자가 `git push`를 아직 하지 않은 상태다. 작업을 시작하기 전에
-`git log --oneline origin/main..HEAD` 로 현재 상태를 먼저 확인할 것
-(그 사이에 사용자가 직접 push했을 수 있다).
+**릴리스는 `prerelease`로 발행된다** — `release.yml`이 `startsWith(version, '0.')`일 때
+사전 릴리스로 표시하기 때문이다(의도된 동작). 0.x를 벗어나면 자동으로 정식 릴리스가 된다.
+
+⚠ 그 부작용을 하나 확인해뒀다 (**5장 23번** — 미해결, 사용자 결정 대기):
+사이트가 "아직 공개된 릴리스가 없습니다"라고 표시한다.
+
+작업 전에는 항상 `git log --oneline origin/main..HEAD` 로 push 상태를 먼저 확인할 것.
 
 ### 작업 방식이 바뀌었다 — 이제 git 저장소다
 
@@ -48,10 +55,11 @@ b4cc2c8  ci: electron 바이너리 다운로드 실패에 재시도·캐시 적�
 `Downloads`의 zip은 **전환 시점의 백업일 뿐 더 이상 정본이 아니다.** 거기에 대고 작업하면
 git 이력과 어긋난다. 반드시 위 로컬 경로에서 작업할 것.
 
-> ⚠ **저장소 이름 불일치 주의**: 실제 저장소는 `thisismo0614/DIAG.BENCH`인데
-> `package.json`과 `website/site.config.json`에는 아직 `OWNER/diag-bench` placeholder가
-> 남아 있다. 웹사이트 링크와 npm 메타데이터가 실제와 다르므로 **사용자와 상의해서
-> 맞춰야 한다**(7장 "사용자가 직접 해야 하는 일" 참고).
+> `package.json`과 `website/site.config.json`의 `OWNER/diag-bench` placeholder는
+> 실제 값(`thisismo0614/DIAG.BENCH`)으로 교체 완료했다. 저장소를 옮기거나 이름을 바꾸면
+> **`site.config.json`의 `siteUrl`을 반드시 같이 고칠 것** — 이 값이 틀리면 링크는
+> 멀쩡해 보여도 canonical·og:url·sitemap·robots가 없는 주소를 가리켜 검색엔진이 사이트를
+> 색인하지 못한다(실제로 그 상태로 배포돼 있었다).
 
 ### Node.js
 
@@ -108,6 +116,8 @@ diag-bench-desktop/
       inspectionReportHtml.js   점검 리포트 HTML 렌더링 (화면/HTML저장/PDF저장이 전부 이 함수 하나를 공유)
       displayChecks.js          불량화소/잔상/균일도 셀프체크 결과 저장(JSON) — 사람 눈 판정 결과를 진단에 반영
       latestCheckStore.js       "따로 실행한 검사의 최신 결과 1건" 저장 공통 구현(유효기간 30일)
+      baseline.js               평소(유휴) 상태 기준선 — 만들기/비교 순수 로직, 판정도 여기서만
+      baselineStore.js          기준선 저장(userData의 baseline.json) — 시간으로는 만료시키지 않음
       vramChecks.js             VRAM 검사 결과 저장 — latestCheckStore 사용
       gpuStressChecks.js        GPU 부하 테스트 결과 저장 — latestCheckStore 사용
     renderer/
@@ -155,6 +165,15 @@ Sensor Recording, Event Log Analysis, Detailed Result, Diagnosis Engine)은 **�
   위변조 감지 해시/HTML·PDF 선택 저장. 화면에 보이는 것과 저장 파일이 완전히 같은 HTML.
 - **SMART**: smartctl 동봉(설치 불필요), `--scan` 기반 장치 조회, 관리자 권한 재검사 버튼.
 - **Display 셀프체크 연동**: 불량화소/잔상/균일도 사람 판정 결과를 진단에 반영.
+- **평소 상태 기준선(Baseline)** (v0.18.0): 유휴 상태를 33초간 재서 기록하고(`baseline.js`)
+  다음 진단부터 "평소 44°C → 지금 60°C"로 비교한다. 절대 임계값으로는 안 잡히는 냉각 성능
+  저하를 잡는 유일한 경로다. 오탐을 막는 두 개의 가드가 이 기능의 핵심이다 —
+  **① 측정 중 부하가 걸려 있으면 저장하지 않는다**(부하 상태가 "평소"로 굳으면 이후 모든
+  진단이 조용히 틀린다), **② 진단 시점이 유휴가 아니면 비교하지 않는다**(부하 중 온도를
+  유휴 기준선과 비교하면 100% 오탐). 판정은 `compareToBaseline` 한 곳에서만 하고
+  `rules.js`의 `baselineFindings()`는 문장으로 옮기기만 한다.
+  온도 차이의 원인은 실내 온도·잔열일 수 있으므로 원인 후보 맨 앞에 그것을 적고
+  confidence를 60 이상으로 올리지 않는다. 5장 19~21번이 이 기능을 만들며 실측으로 찾은 함정이다.
 
 ---
 
@@ -295,6 +314,48 @@ Sensor Recording, Event Log Analysis, Detailed Result, Diagnosis Engine)은 **�
     ⚠ 새 워크플로에서 electron-builder를 부를 때는 **항상 `--publish never`를 붙일 것.**
     릴리스 생성은 release.yml의 `action-gh-release` 단계가 단독으로 책임진다.
 
+19. **`si.currentLoad()`의 첫 호출 값은 쓰면 안 된다 — "직전 호출 이후"의 평균이기 때문이다.**
+    호출 간격이 길면 그 긴 공백이 통째로 평균에 들어가 값이 크게 부풀려진다. 기준선 측정에서
+    같은 조건의 연속 샘플이 **#0=46%, #1~#9=11~16%** 로 나온 것을 실측으로 확인했다. 이 한 샘플
+    때문에 유휴 비율이 무너져 멀쩡한 유휴 PC에서도 측정이 절반쯤 거부됐다.
+    → 기준점만 잡고 버리는 프라이밍 샘플을 먼저 한 번 읽는다(`capture-baseline` 핸들러,
+    `collectIdleSnapshot()`). **CPU 부하를 순간값으로 읽어야 하는 곳은 전부 같은 처리가 필요하다.**
+
+20. **진단 중에 잰 CPU 부하로 "지금 유휴인가"를 판단하면 안 된다 — 그 값에는 이 앱 자신의
+    부하가 섞여 있다.** 전체 진단이 PowerShell·nvidia-smi·SMART 조회를 돌리는 동안 이 PC
+    (4코어 Xeon E3-1230 v5)에서 CPU 부하가 **37~45%** 로 측정됐다. 같은 순간 본작업 전에 뜬
+    스냅샷은 **5~9%** 였다. 이 차이를 모르고 진단 시점 값을 쓰면 유휴 판정이 항상 실패해서
+    기준선 비교 기능이 통째로 죽는다(실제로 그 상태였고, E2E 계측으로 발견했다).
+    → `run-full-diagnostic` / `run-inspection-scan`은 본작업 **전에**
+    `collectors.collectIdleSnapshot()`을 떠서 `baselineSnapshot`으로 넘긴다.
+    참고로 맨 node로 잰 이 PC의 유휴 부하는 중앙값 6.4%(최대 10.7%)인데, 앱 안에서 재면
+    중앙값 13~15%다 — 차이가 앱 자신의 몫이다. 기준선과 비교 시점 **둘 다** 앱이 떠 있는
+    같은 조건이라 비교는 공정하다.
+
+21. **이 개발 PC(Xeon E3-1230 v5)는 CPU 온도 센서를 읽지 못한다 (`cpu.tempC === null`).**
+    CPU 온도가 관련된 기능은 이 PC에서 **끝까지 검증할 수 없다.** 기준선의 CPU 온도 비교도
+    실제 하드웨어로는 확인 못 했고, 규칙 테스트(가짜 입력)로만 검증했다. GPU 온도(nvidia-smi)는
+    정상적으로 읽히므로 GPU 쪽 경로는 실측 검증됐다(기준선 43°C 기록 확인).
+    → 온도 관련 기능을 만들 때는 **센서가 없는 경우를 항상 먼저 처리할 것.** 값을 지어내지 말고
+    `null`로 남기고 해당 항목을 비교 대상에서 빼야 한다.
+
+22. **`contextBridge.exposeInMainWorld`로 노출한 객체는 얼려져 있어 렌더러에서 함수를 가로챌 수 없다.**
+    E2E 테스트에서 `window.diagAPI.captureBaseline`을 몽키패치해 반환값을 가로채려 했는데
+    조용히 실패했다(에러 없이 원래 함수가 그대로 호출됨). → 렌더러 동작을 검증할 때는 API를
+    가로채지 말고 **버튼을 실제로 클릭하고 DOM과 저장 파일에서 결과를 읽을 것.** 어차피
+    사용자가 보는 것도 그 둘이다.
+
+23. **⚠ 미해결: 사이트가 "아직 공개된 릴리스가 없습니다"라고 표시한다 — 실제로는 v0.17.0이 있다.**
+    각각은 의도된 동작인데 맞물려서 생긴 문제다.
+    - `release.yml`은 0.x 버전을 `prerelease: true`로 발행한다(의도된 동작).
+    - `website/build.js`는 `GET /releases/latest`만 조회하는데, **이 API는 prerelease를 제외**한다
+      → HTTP 404 → "릴리스 없음" 대체 동작으로 넘어간다.
+    결과적으로 다운로드 버튼이 `.exe` 직링크를 잃고 릴리스 목록 페이지로 간다(링크가 깨지지는
+    않는다 — GitHub 웹 `/releases/latest`는 목록으로 리다이렉트, HTTP 200 확인).
+    **고칠 때 방향**: `/releases/latest`가 404면 `/releases` 목록에서 draft가 아닌 최신 것을
+    고르고, prerelease면 "사전 릴리스"라고 명시한다. 공개 사이트의 노출 정책이라
+    **사용자 결정이 필요해서 남겨뒀다.**
+
 ---
 
 ## 5-2. 배포 인프라 (2026-08-13 구축)
@@ -371,8 +432,12 @@ git tag vX.Y.Z  →  release.yml
 ## 7. 아직 안 된 것 / 다음 우선순위
 
 ### Priority 2 (남은 것)
-- **Baseline** — 이 PC의 평소 유휴 온도/사용량을 저장해두고 "평소보다 14°C 높음" 같은
-  개인화된 비교. 저장 위치는 `history.js`와 비슷한 패턴(userData에 JSON)이면 될 듯.
+- ~~**Baseline**~~ — v0.18.0 완료(4장 참고). 남은 여지 두 가지:
+  - **CPU 온도 비교는 실제 하드웨어로 검증하지 못했다** — 이 개발 PC에 CPU 온도 센서가
+    없기 때문이다(5장 21번). 온도 센서가 있는 PC에서 반드시 확인할 것.
+  - 지금은 유휴 상태만 기준선으로 삼는다. "부하 상태 기준선"(예: CPU 부하 테스트 중 최고
+    온도를 기록해두고 다음번과 비교)도 같은 구조로 붙일 수 있다 — 이쪽이 냉각 성능 저하에는
+    더 민감하다. 다만 부하 조건을 매번 똑같이 재현해야 비교가 성립한다는 전제가 붙는다.
 - ~~**VRAM Test**~~ — v0.14.0 완료. ~~**GPU 부하 테스트 연동**~~ — v0.15.0 완료.
   둘 다 진단 엔진 연동(GPU 이슈 승격), 이벤트 로그 TDR/WHEA·예기치 않은 종료와의 상관관계,
   점검 리포트 검사 범위 표기까지 붙었다(4장 참고).
@@ -407,10 +472,10 @@ git tag vX.Y.Z  →  release.yml
 ```powershell
 cd C:\Users\gwonm\Documents\diag-bench\diag-bench-desktop
 git log --oneline -3                      # 어디까지 커밋됐나
-git log --oneline origin/main..HEAD       # push 안 된 커밋 (지금은 6ed8762 1건)
+git log --oneline origin/main..HEAD       # push 안 된 커밋
 git status --short                        # 작업 중이던 변경이 있나
 node -v                                   # 없으면 포터블 Node 준비 (2장)
-npm run test-rules                        # 기준선: 130/130 통과해야 함
+npm run test-rules                        # 기준선: 158/158 통과해야 함
 ```
 
 1. **위 명령으로 현재 상태를 먼저 확인한다.** 특히 push 여부 — 사용자가 그 사이에
@@ -422,36 +487,20 @@ npm run test-rules                        # 기준선: 130/130 통과해야 함
 
 ---
 
-## 9. 사용자가 직접 해야 하는 일 (2026-08-13 기준 미완료)
+## 9. 사용자가 직접 해야 하는 일 (2026-08-13 갱신)
 
 코드로 해결할 수 없고 사용자 계정·결정이 필요한 항목들이다.
 
 | # | 항목 | 상태 | 비고 |
 |---|---|---|---|
-| 1 | `git push` | **대기 중** | 로컬 커밋 `6ed8762` 1건 |
-| 2 | `OWNER` placeholder 교체 | 미완료 | ⚠ 아래 참고 |
-| 3 | GitHub Pages 활성화 | 미확인 | Settings → Pages → Source: **GitHub Actions** |
-| 4 | SignPath Open Source 신청 | 미완료 | 승인까지 시간 걸림. 그동안은 "미서명" 릴리스로 배포됨 |
-| 5 | SignPath 변수·시크릿 등록 | 미완료 | Variables 2개 + Secret 1개 (`docs/RELEASING.md` 3절) |
-| 6 | 첫 릴리스 태그 | 미완료 | `git tag v0.17.0 && git push origin v0.17.0` |
+| 1 | `git push` | ✅ 완료 | `6ed8762`까지 origin/main에 있음 |
+| 2 | `OWNER` placeholder 교체 | ✅ 완료 | `site.config.json` + `package.json` 둘 다 |
+| 3 | GitHub Pages 활성화 | ✅ 완료 | 사이트 라이브(HTTP 200) 확인 |
+| 4 | SignPath Open Source 신청 | **미완료** | 승인까지 시간 걸림. 그동안은 "미서명" 릴리스로 배포됨 |
+| 5 | SignPath 변수·시크릿 등록 | **미완료** | Variables 2개 + Secret 1개 (`docs/RELEASING.md` 3절) |
+| 6 | 첫 릴리스 태그 | ✅ 완료 | `v0.17.0` 발행됨(prerelease) |
 | 7 | 도메인 연결 | 선택 | `docs/RELEASING.md` 5절 |
-
-### ⚠ 2번 — 저장소 이름이 문서와 다르다
-
-실제 저장소는 **`thisismo0614/DIAG.BENCH`** 인데, 코드의 placeholder는 `OWNER/diag-bench`다.
-저장소명 자체가 다르므로 단순 치환으로는 안 되고 **사용자에게 어느 쪽에 맞출지 물어봐야 한다.**
-
-바꿔야 할 곳:
-
-| 파일 | 항목 |
-|---|---|
-| `website/site.config.json` | `owner`, `repo`, `siteUrl` ← **사이트 링크에 실제 반영됨** |
-| `package.json` | `homepage`, `repository.url`, `bugs.url` (npm 메타데이터, 기능엔 영향 없음) |
-
-GitHub Actions에서는 `owner`/`repo`를 워크플로가 자동으로 덮어쓰므로(`github.repository_owner`)
-**실제로 문제가 되는 건 `siteUrl`이다.** 현재 값은 `https://OWNER.github.io/diag-bench`인데
-실제 Pages 주소는 `https://thisismo0614.github.io/DIAG.BENCH/`가 된다 — canonical URL과
-sitemap이 틀린 주소를 가리키게 되므로 SEO에 영향이 있다.
+| 8 | 사이트의 prerelease 표시 방침 | **결정 대기** | 5장 23번 — 사이트가 "릴리스 없음"이라고 표시한다 |
 
 > 참고: 저장소 변수 `SITE_URL`을 설정하면 `site.config.json`보다 우선한다.
-> 파일을 안 고치고 변수만 설정해도 된다.
+> 파일을 이미 실제 값으로 고쳐뒀으므로 변수는 설정하지 않아도 된다.
