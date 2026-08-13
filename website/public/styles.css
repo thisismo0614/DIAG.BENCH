@@ -21,6 +21,11 @@
   --bad-soft: #FDEDEB;
   --radius: 12px;
   --wrap: 1080px;
+  /* 그림자는 검정을 깔지 않고 본문 색을 옅게 쓴다. 회색 위에 순수 검정을 얹으면
+     탁해 보인다. */
+  --shadow-sm: 0 1px 2px rgba(27, 29, 33, .05);
+  --shadow-md: 0 4px 16px -4px rgba(27, 29, 33, .10), 0 1px 3px rgba(27, 29, 33, .05);
+  --scroll-thumb: #C9CBC8;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -41,6 +46,10 @@
     --warn-soft: #2A2415;
     --bad: #F2705F;
     --bad-soft: #2E1A18;
+    /* 어두운 배경에서는 그림자가 거의 안 보인다. 대신 더 진하게 깔아 깊이만 남긴다. */
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, .3);
+    --shadow-md: 0 6px 20px -6px rgba(0, 0, 0, .55), 0 1px 3px rgba(0, 0, 0, .3);
+    --scroll-thumb: #3A3E45;
   }
 }
 
@@ -56,13 +65,33 @@ body {
                "Apple SD Gothic Neo", Pretendard, Roboto, sans-serif;
   line-height: 1.7;
   -webkit-font-smoothing: antialiased;
+  /* text-rendering: optimizeLegibility는 쓰지 않는다 — 한글에서 자간이 미묘하게
+     벌어지고 얻는 것이 없다. */
+
+  /* 한글은 기본 규칙에서 **글자 단위**로 줄이 바뀐다. 그대로 두면 "같은 채널의"가
+     "채널" / "의"로 갈라지고 "배치"가 "배" / "치"로 쪼개진다 — 한국어 화면에서
+     가장 눈에 띄는 어색함이다. keep-all을 주면 띄어쓰기에서만 줄이 바뀐다. */
+  word-break: keep-all;
+  /* keep-all의 부작용: 띄어쓰기 없는 긴 토큰(URL, 식별자)이 상자를 뚫고 나간다.
+     그런 것만 예외로 끊어준다. */
+  overflow-wrap: break-word;
 }
 
 .wrap { max-width: var(--wrap); margin: 0 auto; padding: 0 24px; }
 
-h1, h2, h3 { line-height: 1.3; letter-spacing: -0.02em; }
+/* 제목은 마지막 줄에 한 단어만 남는 모양이 특히 눈에 띈다. balance가 줄을 고르게 나눈다. */
+h1, h2, h3 { line-height: 1.3; letter-spacing: -0.02em; text-wrap: balance; }
 a { color: var(--accent); }
 a:hover { color: var(--accent-hover); }
+
+/* 밑줄이 글자에 붙어 있으면 한글 받침을 가린다. 떼고 얇게. */
+.article-body a, .doc-body a, .limit-list a {
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+.article-body a:hover, .doc-body a:hover { text-decoration-thickness: 2px; }
+
+::selection { background: var(--accent-soft); color: var(--text); }
 
 code {
   font-family: ui-monospace, SFMono-Regular, "Cascadia Code", Consolas, monospace;
@@ -71,6 +100,8 @@ code {
   border: 1px solid var(--border);
   border-radius: 5px;
   padding: 1px 6px;
+  /* 코드는 어절 개념이 없다. 본문의 keep-all을 물려받으면 긴 식별자가 상자를 뚫는다. */
+  word-break: break-all;
 }
 pre {
   background: var(--bg-sunken);
@@ -426,6 +457,60 @@ kbd {
 
 /* 앵커로 이동할 때 sticky 헤더에 제목이 가리지 않게 한다 */
 .article-body [id], .doc-body [id] { scroll-margin-top: 78px; }
+
+/* ---------- 마무리 다듬기 ---------- */
+
+/* 스크롤 막대. 기본 막대는 두껍고 회색이라 차분한 화면에서 유독 튄다.
+   가로로 스크롤되는 표·코드 상자에 특히 눈에 띈다. */
+.table-scroll, pre, .toc { scrollbar-width: thin; scrollbar-color: var(--scroll-thumb) transparent; }
+.table-scroll::-webkit-scrollbar, pre::-webkit-scrollbar { height: 8px; width: 8px; }
+.table-scroll::-webkit-scrollbar-track, pre::-webkit-scrollbar-track { background: transparent; }
+.table-scroll::-webkit-scrollbar-thumb, pre::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb); border-radius: 999px;
+}
+
+/* 표: 줄을 눈으로 따라가기 쉽게. 첫 칸은 항목 이름이라 조금 진하게. */
+.article-body tbody tr, .doc-body tbody tr { transition: background .12s; }
+.article-body tbody tr:hover, .doc-body tbody tr:hover { background: var(--bg-sunken); }
+.article-body tbody td:first-child, .doc-body tbody td:first-child { color: var(--text); }
+
+/* 목록 번호·불릿이 본문과 같은 색이면 글줄에 묻힌다. */
+.causes > li::marker, .steps > li::marker, .doc-body ol > li::marker { color: var(--text-faint); font-weight: 700; }
+.doc-body ul > li::marker, .limit-list > li::marker { color: var(--accent); }
+
+/* 카드: 눌러볼 수 있다는 느낌을 살짝만. 그림자는 hover에서만 준다. */
+.hub-card { box-shadow: var(--shadow-sm); }
+.hub-card:hover { box-shadow: var(--shadow-md); transform: translateY(-2px); }
+.hub-card:active { transform: translateY(0); }
+.hub-card p { text-wrap: pretty; }
+
+/* 리드 문단은 마지막 줄에 한 단어만 남기 쉽다. */
+.lead, .limits-intro { text-wrap: pretty; }
+
+/* 판정 조건 상자 — 규칙이 무엇을 보는지가 이 글들의 핵심이라 조금 더 또렷하게.
+   ⚠ 여기에 monospace를 물리면 안 된다. 한글에 고정폭 글꼴이 걸리면 공백이 전각으로
+   렌더링돼 낱말 사이가 두 칸처럼 벌어진다. 본문 글꼴을 그대로 쓰고 무게로만 구분한다. */
+.detect { font-size: 14.5px; line-height: 1.65; font-weight: 500; }
+
+/* 안내 상자 안의 첫 강조 문구가 제목처럼 읽히도록 */
+.notice p strong:first-child { color: var(--text); }
+.notice-warn p strong:first-child { color: var(--warn); }
+
+/* 구분선이 페이지 폭을 다 가르면 문서가 토막나 보인다. 가운데만 옅게. */
+.article-body hr, .doc-body hr {
+  height: 1px; border: 0;
+  background: linear-gradient(to right, transparent, var(--border) 15%, var(--border) 85%, transparent);
+}
+
+/* 빵부스러기 구분자 — 링크 색과 섞이지 않게 */
+.crumbs [aria-hidden] { color: var(--border); }
+
+/* 위저드 번호: 마지막 단계만 강조해 "여기서 끝난다"를 보이게 한다. */
+.wizard > li:last-child::before { border-color: var(--good); color: var(--good); }
+
+/* 키보드 초점은 눈에 잘 띄되 배경을 뚫지 않게 */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
+.hub-card:focus-visible { outline-offset: 2px; }
 
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
