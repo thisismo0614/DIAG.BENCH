@@ -9,7 +9,9 @@ const vramChecks = require('./src/engine/vramChecks');
 const gpuStressChecks = require('./src/engine/gpuStressChecks');
 const baselineStore = require('./src/engine/baselineStore');
 const { summarizeBaselineSamples, MIN_SAMPLES } = require('./src/engine/baseline');
-const { resolveProfile, listProfiles } = require('./src/engine/profiles');
+const { resolveProfile, listProfiles, PROFILES } = require('./src/engine/profiles');
+const sessions = require('./src/engine/sessions');
+const { compareSessions } = require('./src/engine/sessionCompare');
 const { buildComparison } = require('./src/engine/compare');
 const { buildHtmlReport } = require('./src/engine/report');
 const { buildInspectionReport } = require('./src/engine/inspectionReport');
@@ -358,6 +360,16 @@ const SKIPPED = {
 
 ipcMain.handle('list-profiles', () => listProfiles());
 
+// 검사 세션 이력과 임의의 두 세션 비교 (기획서 §16~17, §30~31, §47)
+ipcMain.handle('get-sessions', () => sessions.loadSessions(app.getPath('userData')));
+ipcMain.handle('clear-sessions', () => { sessions.clearSessions(app.getPath('userData')); return true; });
+ipcMain.handle('compare-sessions', (event, { beforeId, afterId } = {}) => {
+  const list = sessions.loadSessions(app.getPath('userData'));
+  const before = list.find((s) => s.id === beforeId);
+  const after = list.find((s) => s.id === afterId);
+  return compareSessions(before, after);
+});
+
 ipcMain.handle('run-profile', async (event, { profileId } = {}) => {
   const p = resolveProfile(profileId);
   const send = (stage) => event.sender.send('diagnostic-progress', stage);
@@ -436,8 +448,28 @@ ipcMain.handle('run-profile', async (event, { profileId } = {}) => {
     const issuedAt = new Date().toISOString();
     const inspectionReport = buildInspectionReport(report, hardwareIdentity || {}, issuedAt, deepTests,
       { vramCheck, gpuStressCheck, smartDetails: storage.smart });
+
+    // 세션으로 남긴다 — 전후 비교(§16~17)와 거래 전후 대조(§31)의 근거가 된다.
+    const session = sessions.appendSession(app.getPath('userData'), {
+      report, raw, hardwareIdentity, inspectionReport, profile: p,
+    });
+
+    // 출고 검사라면 같은 PC의 가장 최근 입고 검사와 비교한다.
+    // 짝을 못 찾으면 비교하지 않는다 — 없는 "개선"을 만들어내지 않기 위해서다.
+    let beforeAfter = null;
+    if (p.sessionRole === 'exit' && p.requiresPair) {
+      const pair = sessions.findPairSession(app.getPath('userData'), {
+        hardwareKey: session.hardwareKey,
+        role: PROFILES[p.requiresPair] ? PROFILES[p.requiresPair].sessionRole : 'intake',
+        beforeId: session.id,
+      });
+      beforeAfter = pair
+        ? compareSessions(pair, session)
+        : { available: false, reason: 'no-pair', rows: [], hardware: null, grade: null, warnings: ['비교할 입고 검사 기록이 없습니다. 같은 PC에서 입고 검사를 먼저 실행해야 전후 비교를 만들 수 있습니다.'] };
+    }
+
     const reportHtml = await buildInspectionReportHtml(inspectionReport, { expanded: false });
-    return { profile: p.id, report, raw, inspectionReport, reportHtml, hardwareIdentity, issuedAt, deepTests };
+    return { profile: p.id, report, raw, inspectionReport, reportHtml, hardwareIdentity, issuedAt, deepTests, session, beforeAfter };
   }
   return { profile: p.id, report, raw };
 });

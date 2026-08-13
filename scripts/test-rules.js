@@ -11,6 +11,8 @@ const { analyzeMemoryConfig } = require('../src/engine/memoryConfig');
 const { analyzeConfiguration } = require('../src/engine/overclock');
 const { parsePingOutput } = require('../src/engine/collectors');
 const { PROFILES, resolveProfile, listProfiles } = require('../src/engine/profiles');
+const { compareSessions } = require('../src/engine/sessionCompare');
+const { extractMetrics, hardwareKeyOf, scopeKeyOf } = require('../src/engine/sessions');
 const { buildInspectionReport } = require('../src/engine/inspectionReport');
 
 let passed = 0;
@@ -1976,6 +1978,152 @@ test('프로필 없이 부른 기존 경로는 그대로 동작한다', () => {
   const r = buildReport(baseInput());
   assert.strictEqual(r.profile, null);
   assert.strictEqual(findSection(r, 'CPU').status, 'normal');
+});
+
+// ============================================================
+section('전후 비교 (기획서 §16~17) · 하드웨어 구성 대조 (§31)');
+// ============================================================
+
+function sess(over = {}) {
+  return {
+    id: 's1', issuedAt: '2026-08-13T00:00:00Z',
+    profileId: 'repairIntake', profileLabel: '수리 입고 검사', sessionRole: 'intake',
+    scopeKey: 'SCOPE-A', reportId: 'DB-1', grade: 'C', deepTestsIncluded: true, hardwareKey: 'k1',
+    hardware: { cpuModel: 'Test CPU', gpuModels: ['Test GPU'], memoryTotalGB: 32, memoryModuleCount: 4, diskSerials: ['D1'], baseboardSerial: 'B1' },
+    metrics: {
+      cpuMaxTempC: 94, gpuMaxTempC: 82, ramSpeedMTs: 2666, wheaErrors: 4,
+      unexpectedShutdowns: 2, bugchecks: 1, driverErrors: 3, ramTestErrors: 0,
+      storageWriteMBps: 480, storageReadMBps: 1200,
+    },
+    ...over,
+  };
+}
+const rowOf = (c, key) => c.rows.find((r) => r.key === key);
+
+test('[기획서 §17] 수리 전후 표를 만든다', () => {
+  const before = sess();
+  const after = sess({
+    id: 's2', profileId: 'repairExit', profileLabel: '수리 출고 검사', sessionRole: 'exit', grade: 'A',
+    metrics: { ...sess().metrics, cpuMaxTempC: 76, gpuMaxTempC: 75, ramSpeedMTs: 3200, wheaErrors: 0, driverErrors: 0 },
+  });
+  const c = compareSessions(before, after);
+  assert.ok(c.available);
+  assert.strictEqual(rowOf(c, 'cpuMaxTempC').verdict, 'improved');
+  assert.strictEqual(rowOf(c, 'cpuMaxTempC').diff, -18);
+  assert.strictEqual(rowOf(c, 'ramSpeedMTs').verdict, 'improved', '메모리 속도는 높을수록 좋다');
+  assert.strictEqual(rowOf(c, 'wheaErrors').verdict, 'improved');
+  assert.strictEqual(c.grade.verdict, 'improved');
+});
+
+test('나빠진 항목은 악화로 정확히 표시한다', () => {
+  const c = compareSessions(sess(), sess({ id: 's2', metrics: { ...sess().metrics, cpuMaxTempC: 99 } }));
+  assert.strictEqual(rowOf(c, 'cpuMaxTempC').verdict, 'worsened');
+});
+
+test('미세한 변화는 개선/악화라고 하지 않는다', () => {
+  const c = compareSessions(sess(), sess({ id: 's2', metrics: { ...sess().metrics, cpuMaxTempC: 93 } }));
+  assert.strictEqual(rowOf(c, 'cpuMaxTempC').verdict, 'unchanged');
+});
+
+test('저장장치 처리량은 절대값이 아니라 비율로 판단한다', () => {
+  // NVMe 1200MB/s에서 20MB/s 차이는 노이즈다.
+  const small = compareSessions(sess(), sess({ id: 's2', metrics: { ...sess().metrics, storageReadMBps: 1220 } }));
+  assert.strictEqual(rowOf(small, 'storageReadMBps').verdict, 'unchanged');
+  const big = compareSessions(sess(), sess({ id: 's2', metrics: { ...sess().metrics, storageReadMBps: 600 } }));
+  assert.strictEqual(rowOf(big, 'storageReadMBps').verdict, 'worsened');
+});
+
+test('[핵심] 한쪽에서 측정되지 않은 항목은 개선이라고 하지 않는다', () => {
+  const before = sess({ metrics: { ...sess().metrics, gpuMaxTempC: null } });
+  const after = sess({ id: 's2', metrics: { ...sess().metrics, gpuMaxTempC: 60 } });
+  const r = rowOf(compareSessions(before, after), 'gpuMaxTempC');
+  assert.strictEqual(r.verdict, 'not-comparable');
+  assert.strictEqual(r.diff, null);
+  assert.ok(r.reason.includes('측정되지 않아'));
+});
+
+test('[핵심] 한쪽만 부하 테스트를 했으면 부하 항목을 비교하지 않는다', () => {
+  // 부하 중 최고 온도와 유휴 온도를 나란히 놓으면 비교가 통째로 거짓이 된다.
+  const before = sess();
+  const after = sess({ id: 's2', deepTestsIncluded: false });
+  const c = compareSessions(before, after);
+  assert.strictEqual(rowOf(c, 'cpuMaxTempC').verdict, 'not-comparable');
+  assert.ok(c.warnings.some((w) => w.includes('부하 테스트')));
+  assert.notStrictEqual(rowOf(c, 'wheaErrors').verdict, 'not-comparable');
+});
+
+test('검사 범위가 다르면 경고를 단다', () => {
+  const c = compareSessions(
+    sess(),
+    sess({ id: 's2', profileId: 'quick', profileLabel: '빠른 점검', scopeKey: 'SCOPE-B' }));
+  assert.ok(c.warnings.some((w) => w.includes('검사 범위')));
+});
+
+test('[핵심] 이름만 다르고 범위가 같으면 경고하지 않는다 (입고↔출고)', () => {
+  // 수리 입고/출고는 이름은 다르지만 범위가 같도록 일부러 맞춰둔 짝이다.
+  // 여기서 매번 경고가 뜨면 정작 진짜 경고를 흘려보게 된다.
+  const key = scopeKeyOf(PROFILES.repairIntake);
+  assert.strictEqual(key, scopeKeyOf(PROFILES.repairExit), '입고/출고 범위 지문이 같아야 함');
+  const c = compareSessions(
+    sess({ scopeKey: key }),
+    sess({ id: 's2', profileId: 'repairExit', profileLabel: '수리 출고 검사', scopeKey: key }));
+  assert.ok(!c.warnings.some((w) => w.includes('검사 범위')), `불필요한 경고: ${c.warnings.join(' / ')}`);
+});
+
+test('비교할 세션이 없으면 비교하지 않는다', () => {
+  assert.strictEqual(compareSessions(null, sess()).available, false);
+  assert.strictEqual(compareSessions(sess(), null).reason, 'missing-session');
+});
+
+test('[기획서 §31] 하드웨어 구성이 같으면 일치로 표시한다', () => {
+  const c = compareSessions(sess(), sess({ id: 's2' }));
+  assert.strictEqual(c.hardware.verdict, 'match');
+  assert.strictEqual(c.hardware.differsCount, 0);
+});
+
+test('[기획서 §31] GPU가 바뀌었으면 다름으로 표시한다', () => {
+  const after = sess({ id: 's2', hardware: { ...sess().hardware, gpuModels: ['Other GPU'] } });
+  const c = compareSessions(sess(), after);
+  assert.strictEqual(c.hardware.verdict, 'differs');
+  assert.strictEqual(c.hardware.rows.find((r) => r.key === 'gpuModels').verdict, 'differs');
+});
+
+test('하드웨어 대조는 "인증"이 아니라는 한계를 명시한다', () => {
+  const c = compareSessions(sess(), sess({ id: 's2' }));
+  assert.ok(c.hardware.limitation.includes('물리적 교체'), c.hardware.limitation);
+});
+
+test('식별값을 못 읽은 항목은 일치라고 하지 않는다', () => {
+  const after = sess({ id: 's2', hardware: { ...sess().hardware, baseboardSerial: null } });
+  const c = compareSessions(sess(), after);
+  assert.strictEqual(c.hardware.rows.find((r) => r.key === 'baseboardSerial').verdict, 'unknown');
+  assert.strictEqual(c.hardware.verdict, 'partial');
+});
+
+test('세션 지표는 못 읽은 값을 0으로 채우지 않는다', () => {
+  // 0으로 채우면 "오류 0건"이라는 없는 사실을 만들어낸다.
+  const report = buildReport(baseInput({ eventLog: { supported: false, events: [], days: 7, error: null } }));
+  const m = extractMetrics(report, { deepTests: { included: false }, eventLog: { supported: false }, system: { driverQueryOk: false, driverErrors: [] } });
+  assert.strictEqual(m.wheaErrors, null);
+  assert.strictEqual(m.driverErrors, null);
+  assert.strictEqual(m.cpuMaxTempC, null);
+});
+
+test('부하 테스트를 돌렸으면 그때의 최고 온도를 남긴다', () => {
+  const report = buildReport(baseInput());
+  const m = extractMetrics(report, {
+    deepTests: { included: true, cpuStress: { maxTempC: 88 }, ramTest: { errors: 0 }, storageTest: { writeMBps: 500, readMBps: 1100 } },
+    eventLog: { supported: true, counts: [{ provider: 'Microsoft-Windows-WHEA-Logger', id: 18, count: 2 }] },
+    system: { driverQueryOk: true, driverErrors: [{}] },
+  });
+  assert.strictEqual(m.cpuMaxTempC, 88);
+  assert.strictEqual(m.wheaErrors, 2);
+  assert.strictEqual(m.driverErrors, 1);
+});
+
+test('하드웨어 열쇠는 식별값이 하나도 없으면 만들지 않는다', () => {
+  assert.strictEqual(hardwareKeyOf({}), null);
+  assert.ok(hardwareKeyOf({ cpuModel: 'Test CPU', memoryTotalGB: 32 }));
 });
 
 // ============================================================

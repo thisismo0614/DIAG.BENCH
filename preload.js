@@ -21,6 +21,10 @@ contextBridge.exposeInMainWorld('diagAPI', {
   listProfiles: () => ipcRenderer.invoke('list-profiles'),
   runProfile: (opts) => ipcRenderer.invoke('run-profile', opts),
 
+  getSessions: () => ipcRenderer.invoke('get-sessions'),
+  clearSessions: () => ipcRenderer.invoke('clear-sessions'),
+  compareSessions: (payload) => ipcRenderer.invoke('compare-sessions', payload),
+
   getBaseline: () => ipcRenderer.invoke('get-baseline'),
   captureBaseline: () => ipcRenderer.invoke('capture-baseline'),
   clearBaseline: () => ipcRenderer.invoke('clear-baseline'),

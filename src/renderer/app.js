@@ -331,6 +331,179 @@ document.getElementById('history-clear-btn').addEventListener('click', async () 
 document.querySelector('[data-target="view-history"]').addEventListener('click', loadHistoryView);
 
 /* ============================================================
+   DIAGNOSTIC PROFILES — 목적별 검사
+   ------------------------------------------------------------
+   화면은 아무것도 판정하지 않는다. 어떤 검사를 건너뛸지도, 그 결과를 어떻게 부를지도
+   전부 엔진(profiles.js / resultStatus.js)이 정하고, 여기서는 받은 값을 보여주기만 한다.
+============================================================ */
+const RESULT_TONE = {
+  PASS: '#16a34a', WARNING: '#d97706', ERROR: '#dc2626', CRITICAL: '#b91c1c',
+  NOT_TESTED: '#6b7280', UNKNOWN: '#6b7280',
+};
+function esc(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+async function loadProfilesView() {
+  const list = await window.diagAPI.listProfiles();
+  document.getElementById('profile-list').innerHTML = list.map((p) => `
+    <div class="device-panel" style="margin-bottom:12px;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;">
+        <div style="flex:1;min-width:260px;">
+          <div class="device-panel-title">${esc(p.label)}</div>
+          <p class="mini-desc" style="margin-top:6px;">${esc(p.purpose)}</p>
+          <p class="mini-desc" style="margin-top:6px;">
+            대상: ${esc(p.audience)} · 예상 ${p.estimatedSec}초
+            · ${p.runsDeepTests ? '부하 테스트 포함' : '부하 테스트 없음'}
+            · ${p.report === 'inspection' ? '점검 리포트 발급' : '진단 결과만'}
+          </p>
+          ${p.warning ? `<div class="note-card" style="margin-top:8px;">${esc(p.warning)}</div>` : ''}
+        </div>
+        <button class="btn" data-profile="${esc(p.id)}">검사 시작</button>
+      </div>
+    </div>`).join('');
+
+  document.querySelectorAll('#profile-list [data-profile]').forEach((btn) => {
+    btn.addEventListener('click', () => runProfileScan(btn.dataset.profile, list.find((x) => x.id === btn.dataset.profile), btn));
+  });
+}
+
+function renderProfileSections(report) {
+  return `<div class="device-panel">
+    <div class="device-panel-title" style="margin-bottom:10px;">항목별 결과</div>
+    ${report.sections.map((s) => `
+      <div style="display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid rgba(0,0,0,.06);">
+        <span>${esc(s.category)}</span>
+        <span style="color:${RESULT_TONE[s.result] || '#6b7280'};font-weight:600;">${esc(s.resultLabel || s.result)}</span>
+      </div>`).join('')}
+  </div>`;
+}
+
+async function runProfileScan(profileId, meta, btn) {
+  const progress = document.getElementById('profile-progress');
+  const resultEl = document.getElementById('profile-result');
+  document.querySelectorAll('#profile-list [data-profile]').forEach((b) => { b.disabled = true; });
+  btn.textContent = '검사 중...';
+  progress.style.display = 'block';
+  document.getElementById('profile-progress-title').textContent = `${meta.label} 진행 중 (예상 ${meta.estimatedSec}초)`;
+  resultEl.innerHTML = '';
+  try {
+    const res = await window.diagAPI.runProfile({ profileId });
+    const rep = res.report;
+    const skipped = rep.sections.filter((s) => s.result === 'NOT_TESTED');
+    resultEl.innerHTML = `
+      <div class="headline-card">
+        <div>
+          <div class="headline-eyebrow">${esc(rep.profile ? rep.profile.label : '검사 결과')}</div>
+          <div class="headline-text">${esc(rep.headline)}</div>
+        </div>
+      </div>
+      ${renderProfileSections(rep)}
+      ${skipped.length ? `<div class="device-panel">
+        <div class="device-panel-title" style="margin-bottom:10px;">이번 검사에서 확인하지 않은 것</div>
+        <ul class="mini-desc" style="padding-left:18px;">
+          ${skipped.map((s) => `<li><b>${esc(s.category)}</b> — ${esc(s.note || '검사하지 않음')}</li>`).join('')}
+          ${(rep.profile ? rep.profile.skippedByDesign : []).map((n) => `<li>${esc(n)}</li>`).join('')}
+        </ul>
+      </div>` : ''}
+      ${res.inspectionReport ? `<div class="note-card">점검 리포트 발급됨 — ${esc(res.inspectionReport.reportId)} · 등급 ${esc(res.inspectionReport.overallGrade.letter)} (${esc(res.inspectionReport.overallGrade.label)})</div>` : ''}
+      ${res.beforeAfter ? renderBeforeAfter(res.beforeAfter) : ''}`;
+    if (res.session) loadSessionsView();
+  } finally {
+    progress.style.display = 'none';
+    document.querySelectorAll('#profile-list [data-profile]').forEach((b) => { b.disabled = false; });
+    btn.textContent = '검사 시작';
+  }
+}
+window.diagAPI.onProgress((stage) => {
+  const el = document.getElementById('profile-progress-stage');
+  if (el) el.textContent = stage;
+});
+document.querySelector('[data-target="view-profiles"]').addEventListener('click', loadProfilesView);
+
+/* ============================================================
+   SESSIONS — 검사 세션과 전후 비교 (기획서 §16~17, §31)
+============================================================ */
+const VERDICT_TEXT = {
+  improved: ['개선', '#16a34a'], worsened: ['악화', '#dc2626'],
+  unchanged: ['변화 없음', '#6b7280'], 'not-comparable': ['비교 불가', '#6b7280'],
+  match: ['일치', '#16a34a'], differs: ['다름', '#dc2626'], unknown: ['확인 불가', '#6b7280'],
+};
+function verdictBadge(v) {
+  const [text, color] = VERDICT_TEXT[v] || [v, '#6b7280'];
+  return `<span style="color:${color};font-weight:600;">${esc(text)}</span>`;
+}
+
+function renderBeforeAfter(cmp) {
+  if (!cmp.available) {
+    return `<div class="device-panel"><div class="device-panel-title">전후 비교</div>
+      <p class="mini-desc" style="margin-top:8px;">${esc((cmp.warnings && cmp.warnings[0]) || '비교할 수 있는 기록이 없습니다.')}</p></div>`;
+  }
+  const row = (r) => `<tr>
+    <td style="padding:6px 0;">${esc(r.label)}</td>
+    <td style="text-align:right;">${r.before === null ? '–' : esc(r.before) + esc(r.unit)}</td>
+    <td style="text-align:right;">${r.after === null ? '–' : esc(r.after) + esc(r.unit)}</td>
+    <td style="text-align:right;">${r.diff === null ? '–' : (r.diff > 0 ? '+' : '') + esc(r.diff)}</td>
+    <td style="text-align:right;">${verdictBadge(r.verdict)}${r.reason ? `<br><span class="mini-desc">${esc(r.reason)}</span>` : ''}</td>
+  </tr>`;
+  return `<div class="device-panel">
+    <div class="device-panel-title" style="margin-bottom:10px;">전후 비교</div>
+    <p class="mini-desc">${esc(cmp.before.profileLabel)} (${new Date(cmp.before.at).toLocaleString('ko-KR')})
+      → ${esc(cmp.after.profileLabel)} (${new Date(cmp.after.at).toLocaleString('ko-KR')})</p>
+    ${cmp.grade ? `<p class="mini-desc">등급 ${esc(cmp.grade.before)} → ${esc(cmp.grade.after)} ${verdictBadge(cmp.grade.verdict)}</p>` : ''}
+    ${cmp.warnings.map((w) => `<div class="note-card" style="margin-top:8px;">${esc(w)}</div>`).join('')}
+    ${cmp.rows.length ? `<table style="width:100%;margin-top:12px;font-size:13px;border-collapse:collapse;">
+      <tr style="color:var(--ink-soft);text-align:left;"><th>항목</th><th style="text-align:right;">이전</th><th style="text-align:right;">이후</th><th style="text-align:right;">변화</th><th style="text-align:right;">판정</th></tr>
+      ${cmp.rows.map(row).join('')}
+    </table>` : '<p class="mini-desc" style="margin-top:8px;">비교할 수 있는 측정값이 없습니다.</p>'}
+    ${cmp.hardware ? `<div style="margin-top:16px;">
+      <div class="device-panel-title">하드웨어 구성 대조 ${verdictBadge(cmp.hardware.verdict)}</div>
+      <table style="width:100%;margin-top:8px;font-size:13px;border-collapse:collapse;">
+        ${cmp.hardware.rows.map((r) => `<tr>
+          <td style="padding:4px 0;">${esc(r.label)}</td>
+          <td>${esc(r.before ?? '–')}</td><td>${esc(r.after ?? '–')}</td>
+          <td style="text-align:right;">${verdictBadge(r.verdict)}</td></tr>`).join('')}
+      </table>
+      <p class="mini-desc" style="margin-top:8px;">${esc(cmp.hardware.limitation)}</p>
+    </div>` : ''}
+  </div>`;
+}
+
+async function loadSessionsView() {
+  const list = await window.diagAPI.getSessions();
+  const before = document.getElementById('session-before');
+  const after = document.getElementById('session-after');
+  const empty = document.getElementById('session-empty');
+  if (!list.length) {
+    before.innerHTML = after.innerHTML = '';
+    empty.textContent = '아직 기록된 세션이 없습니다. "목적별 검사"에서 점검 리포트를 만드는 프로필(중고 PC 점검, 출고 전 검사, 수리 입고/출고)을 실행하면 여기에 쌓입니다.';
+    return;
+  }
+  empty.textContent = `${list.length}개 세션이 기록되어 있습니다.`;
+  const opts = list.slice().reverse().map((s) =>
+    `<option value="${esc(s.id)}">${new Date(s.issuedAt).toLocaleString('ko-KR')} · ${esc(s.profileLabel || s.profileId)}${s.grade ? ` · ${esc(s.grade)}등급` : ''}</option>`).join('');
+  before.innerHTML = opts;
+  after.innerHTML = opts;
+  if (list.length >= 2) { before.selectedIndex = 1; after.selectedIndex = 0; }
+}
+
+document.getElementById('session-compare-btn').addEventListener('click', async () => {
+  const beforeId = document.getElementById('session-before').value;
+  const afterId = document.getElementById('session-after').value;
+  const out = document.getElementById('session-compare-result');
+  if (!beforeId || !afterId) { out.innerHTML = '<p class="mini-desc">비교할 세션을 두 개 선택하세요.</p>'; return; }
+  if (beforeId === afterId) { out.innerHTML = '<p class="mini-desc">서로 다른 세션을 선택하세요.</p>'; return; }
+  out.innerHTML = renderBeforeAfter(await window.diagAPI.compareSessions({ beforeId, afterId }));
+});
+document.getElementById('session-refresh-btn').addEventListener('click', loadSessionsView);
+document.getElementById('session-clear-btn').addEventListener('click', async () => {
+  await window.diagAPI.clearSessions();
+  document.getElementById('session-compare-result').innerHTML = '';
+  loadSessionsView();
+});
+document.querySelector('[data-target="view-sessions"]').addEventListener('click', loadSessionsView);
+
+/* ============================================================
    BASELINE — 평소 상태 기준선
    ------------------------------------------------------------
    여기서는 아무것도 판정하지 않는다. 저장 여부(verdict)는 메인 프로세스의
