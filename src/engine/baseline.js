@@ -115,6 +115,11 @@ function summarizeBaselineSamples(samples, hardware = {}) {
   if (!gpuSamples.length) gpuNote = 'GPU 실시간 값을 읽을 수 없어(비NVIDIA 또는 nvidia-smi 없음) GPU 기준선은 만들지 않았습니다.';
   else if (!gpuUsable) gpuNote = `측정 중 GPU 부하가 유휴 범위(${IDLE_GPU_LOAD_MAX}% 이하)를 벗어나 GPU 기준선은 만들지 않았습니다.`;
 
+  const cpuIdleTempC = round(median(idle.map((s) => s.cpu.tempC)));
+  // 온도를 못 읽었으면 사유를 남긴다. "센서가 없다"와 "권한이 없다"는 다르고,
+  // 후자면 관리자 권한으로 실행해 다시 재면 온도 기준선을 만들 수 있다.
+  const tempBlockedByPermission = idle.some((s) => s.cpu && s.cpu.tempReason === 'permission');
+
   const record = {
     cpuModel: hardware.cpuModel || null,
     gpuModel: hardware.gpuModel || null,
@@ -123,7 +128,7 @@ function summarizeBaselineSamples(samples, hardware = {}) {
     durationSec: list.length >= 2 && list[0].t && list[list.length - 1].t
       ? round((list[list.length - 1].t - list[0].t) / 1000)
       : null,
-    cpuIdleTempC: round(median(idle.map((s) => s.cpu.tempC))),
+    cpuIdleTempC,
     cpuIdleLoadPercent: round(median(idle.map((s) => s.cpu.loadPercent))),
     cpuIdleClockGHz: round(median(idle.map((s) => s.cpu.clockGHz)), 2),
     // 편차가 크면 기준선 자체가 흔들린다는 뜻이라 함께 저장해서 근거에 적는다.
@@ -132,6 +137,10 @@ function summarizeBaselineSamples(samples, hardware = {}) {
     gpuIdleLoadPercent: gpuUsable ? round(median(gpuIdle.map((s) => s.gpu.loadPercent))) : null,
     memIdleUsedPercent: round(median(idle.map((s) => (s.ram ? s.ram.usedPercent : null)))),
     gpuNote,
+    cpuTempNote: cpuIdleTempC !== null ? null
+      : (tempBlockedByPermission
+        ? '관리자 권한이 없어 CPU 온도를 읽지 못해 온도 기준선은 만들지 못했습니다. 관리자 권한으로 실행하면 온도까지 기록됩니다.'
+        : 'CPU 온도를 읽을 수 없어 온도 기준선은 만들지 못했습니다.'),
   };
 
   return {

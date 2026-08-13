@@ -36,6 +36,7 @@ const store = createLatestCheckStore({
       gpuIdleLoadPercent: num(record.gpuIdleLoadPercent),
       memIdleUsedPercent: num(record.memIdleUsedPercent),
       gpuNote: record.gpuNote || null,
+      cpuTempNote: record.cpuTempNote || null,
     };
   },
 });

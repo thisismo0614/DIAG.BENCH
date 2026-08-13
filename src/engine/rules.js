@@ -502,9 +502,14 @@ function cpuStressFindings(cpuStress) {
       '냉각을 개선한 뒤 같은 테스트를 반복해 클럭 유지 여부를 비교하세요.'));
   }
 
-  // 센서를 못 읽었으면 "온도 안전장치가 동작했다"고 말하면 안 된다.
+  // 온도를 못 읽었으면 "온도 안전장치가 동작했다"고 말하면 안 된다.
+  // ⚠ 사유를 정확히 적는다 — 대부분은 센서 부재가 아니라 관리자 권한 부족이고,
+  //   그 경우 사용자는 앱을 승격해서 다시 실행하면 안전장치를 쓸 수 있다.
   if (cpuStress.tempSensorAvailable === false) {
-    evidence.push(`CPU 부하 테스트: 온도 센서를 읽을 수 없어 온도 기반 자동 중단 없이, 시간 제한(${cpuStress.effectiveDurationSec ?? cpuStress.durationSec}초) 안전 모드로만 실행했습니다`);
+    const limit = cpuStress.effectiveDurationSec ?? cpuStress.durationSec;
+    evidence.push(cpuStress.tempUnavailableReason === 'permission'
+      ? `CPU 부하 테스트: 관리자 권한이 없어 온도를 읽지 못해, 온도 기반 자동 중단 없이 시간 제한(${limit}초) 안전 모드로만 실행했습니다 — 관리자 권한으로 실행하면 온도 안전장치를 쓸 수 있습니다`
+      : `CPU 부하 테스트: 온도를 읽을 수 없어 온도 기반 자동 중단 없이, 시간 제한(${limit}초) 안전 모드로만 실행했습니다`);
   }
   if (cpuStress.completed && cpuStress.loadAchieved === false) {
     evidence.push(`CPU 부하 테스트: 부하가 ${cpuStress.maxLoadPercent}%까지밖에 올라가지 않아 충분히 밀어붙였다고 보기 어렵습니다`);

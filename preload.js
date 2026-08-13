@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld('diagAPI', {
 
   retrySmartElevated: (payload) => ipcRenderer.invoke('retry-smart-elevated', payload),
   retryCpuTempElevated: (payload) => ipcRenderer.invoke('retry-cpu-temp-elevated', payload),
+  getElevationState: () => ipcRenderer.invoke('get-elevation-state'),
+  relaunchElevated: () => ipcRenderer.invoke('relaunch-elevated'),
 
   getDisplayChecks: () => ipcRenderer.invoke('get-display-checks'),
   saveDisplayCheck: (payload) => ipcRenderer.invoke('save-display-check', payload),

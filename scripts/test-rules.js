@@ -2060,6 +2060,53 @@ test('온도를 읽었으면 기존 온도 판정이 그대로 동작한다', ()
   assert.strictEqual(findSection(r, 'CPU').status, 'critical');
 });
 
+test('[회귀 방지] 부하 테스트도 사유를 구분해 안내한다', () => {
+  // 이 경로는 collectCpu()와 별개라서, 엔진만 고쳤을 때 여기 문구가 그대로 남아 있었다.
+  const perm = buildReport(baseInput({
+    deepTests: {
+      included: true,
+      cpuStress: { ...passingCpuStressForGrade, tempSensorAvailable: false, tempUnavailableReason: 'permission', maxTempC: null, startTempC: null, effectiveDurationSec: 30, safetyMode: 'time-limited' },
+      storageTest: passingStorageForGrade, ramTest: passingRamForGrade,
+    },
+  }));
+  const ev = findSection(perm, 'CPU').normalEvidence.join(' ');
+  assert.ok(/관리자 권한이 없어 온도를 읽지 못해/.test(ev), ev);
+  assert.ok(!/센서/.test(ev), '권한 문제인데 센서 얘기를 하면 안 됨');
+
+  const noSensor = buildReport(baseInput({
+    deepTests: {
+      included: true,
+      cpuStress: { ...passingCpuStressForGrade, tempSensorAvailable: false, tempUnavailableReason: 'not-supported', maxTempC: null, startTempC: null, effectiveDurationSec: 30, safetyMode: 'time-limited' },
+      storageTest: passingStorageForGrade, ramTest: passingRamForGrade,
+    },
+  }));
+  assert.ok(!/관리자 권한/.test(findSection(noSensor, 'CPU').normalEvidence.join(' ')));
+});
+
+test('[회귀 방지] 기준선도 온도를 못 읽은 사유를 남긴다', () => {
+  // 기준선은 collectLiveSample()을 쓰는 또 다른 경로다.
+  const samples = Array.from({ length: 12 }, (_, i) => ({
+    t: 1_700_000_000_000 + i * 1500,
+    cpu: { loadPercent: 5, tempC: null, tempReason: 'permission', clockGHz: 1.2 },
+    gpu: null, ram: { usedPercent: 30 },
+  }));
+  const s = summarizeBaselineSamples(samples, { cpuModel: 'Test CPU' });
+  assert.strictEqual(s.verdict, 'ok');
+  assert.strictEqual(s.record.cpuIdleTempC, null);
+  assert.ok(/관리자 권한/.test(s.record.cpuTempNote), s.record.cpuTempNote);
+});
+
+test('온도를 읽으면 기준선에 사유를 남기지 않는다', () => {
+  const samples = Array.from({ length: 12 }, (_, i) => ({
+    t: 1_700_000_000_000 + i * 1500,
+    cpu: { loadPercent: 5, tempC: 44, tempReason: 'ok', clockGHz: 1.2 },
+    gpu: null, ram: { usedPercent: 30 },
+  }));
+  const s = summarizeBaselineSamples(samples, {});
+  assert.strictEqual(s.record.cpuIdleTempC, 44);
+  assert.strictEqual(s.record.cpuTempNote, null);
+});
+
 test('온도를 읽으면 재측정 버튼 조건이 사라진다', () => {
   const r = buildReport(baseInput({
     cpu: { model: 'Test CPU', loadPercent: 10, tempC: 45, tempReason: 'ok', clockGHz: 3.5 },

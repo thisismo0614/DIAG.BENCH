@@ -73,6 +73,10 @@ async function runCpuStressTest({ testId, durationSec, safetyTempC, onProgress }
   let probe = null;
   try { probe = await collectors.collectCpu(); } catch { probe = null; }
   const tempSensorAvailable = !!(probe && probe.tempC !== null && probe.tempC !== undefined);
+  // 왜 못 읽었는지도 함께 남긴다. 실측으로 확인한 바 대부분은 "센서 없음"이 아니라
+  // **관리자 권한 없음**이고, 그 경우 사용자는 앱을 승격해서 다시 실행하면 된다.
+  // 두 경우에 같은 문구를 쓰면 고칠 수 있는 문제를 못 고치게 만든다.
+  const tempUnavailableReason = tempSensorAvailable ? null : ((probe && probe.tempReason) || 'unknown');
 
   // 센서가 없으면 시간 상한을 더 짧게 잡는다(온도를 못 보므로 오래 태우지 않는다).
   const effectiveDurationSec = tempSensorAvailable
@@ -113,7 +117,7 @@ async function runCpuStressTest({ testId, durationSec, safetyTempC, onProgress }
       completed: false, aborted: true, abortReason: '부하 워커를 생성하지 못했습니다', abortKind: 'worker-error',
       workerError: workerError || 'no workers started',
       durationSec: 0, requestedDurationSec, coreCount, workerCount: 0,
-      tempSensorAvailable, safetyMode, safetyTempC: safetyTemp,
+      tempSensorAvailable, tempUnavailableReason, safetyMode, safetyTempC: safetyTemp,
       startTempC, maxTempC: null, minClockGHz: null, maxClockGHz: null, maxLoadPercent: null,
       clockDroppedUnderLoad: null, loadAchieved: false, samples: 0,
     };
@@ -176,6 +180,7 @@ async function runCpuStressTest({ testId, durationSec, safetyTempC, onProgress }
     coreCount,
     workerCount: workers.length,
     tempSensorAvailable,
+    tempUnavailableReason,
     safetyMode,
     safetyTempC: safetyTemp,
     startTempC,

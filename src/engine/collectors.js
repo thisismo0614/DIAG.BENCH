@@ -336,6 +336,16 @@ function parseThermalZones(out) {
   }
 }
 
+// 온도를 못 읽는 사유는 프로세스가 사는 동안 바뀌지 않는다(권한은 실행 시점에 정해진다).
+// 실시간 샘플링은 1초마다 돌므로 매번 PowerShell을 띄우면 안 된다 → 한 번만 확인하고 캐시한다.
+// 승격해서 다시 실행하면 새 프로세스라 캐시도 새로 잡힌다.
+let cachedTempReason = null;
+async function cpuTempReason() {
+  if (cachedTempReason) return cachedTempReason;
+  cachedTempReason = (await probeCpuTemperature()).reason;
+  return cachedTempReason;
+}
+
 // 비승격 상태에서 시도해보고, 실패했다면 그 이유를 분류한다.
 async function probeCpuTemperature() {
   if (process.platform !== 'win32') return { tempC: null, reason: TEMP_REASON.NOT_SUPPORTED, zones: [] };
@@ -600,9 +610,17 @@ async function collectLiveSample() {
     }
   }
 
+  // 온도를 못 읽었으면 사유도 함께 싣는다. 기준선이 이 값을 쓰기 때문에,
+  // "센서가 없다"와 "권한이 없다"를 여기서도 구분해야 안내가 정확해진다.
+  const cpuTempC = temp.main ?? null;
   return {
     t: Date.now(),
-    cpu: { loadPercent: round(load.currentLoad), tempC: temp.main ?? null, clockGHz: speed.avg ?? null },
+    cpu: {
+      loadPercent: round(load.currentLoad),
+      tempC: cpuTempC,
+      tempReason: cpuTempC !== null ? TEMP_REASON.OK : await cpuTempReason(),
+      clockGHz: speed.avg ?? null,
+    },
     gpu,
     ram: { usedPercent: round(((mem.total - mem.available) / mem.total) * 100) },
   };

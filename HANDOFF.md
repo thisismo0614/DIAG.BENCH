@@ -413,6 +413,25 @@ Sensor Recording, Event Log Analysis, Detailed Result, Diagnosis Engine)은 **�
       실측: `ACPI\ThermalZone\TZ00_0 = 27.9°C`, `TZ01_0 = 29.9°C` — 영역이 여러 개면
       가장 높은 값을 쓰고 **어느 영역인지 근거에 함께 적는다.** "CPU 온도"라고 단정하지 않는다.
 
+30-1. **온도를 읽는 경로가 세 군데다 — 하나만 고치면 나머지 둘에 버그가 남는다.**
+    30번을 `collectCpu()`에서만 고쳤더니, 사용자가 노트북에서 부하 테스트를 돌렸을 때
+    **"이 시스템은 CPU 온도 센서를 읽을 수 없어…"라는 옛 문구가 그대로 나왔다.**
+    28번에 적어둔 함정(엔진만 고치면 표시 계층에 버그가 남는다)을 그대로 반복한 것이다.
+
+    | 경로 | 쓰는 곳 | 특성 |
+    |---|---|---|
+    | `collectCpu()` | 전체 진단 | 1회 측정 → **UAC 재측정으로 해결 가능** |
+    | `collectLiveSample()` | 기준선, 실시간 모니터링 | **1초 간격 연속** |
+    | `stress.js` | 부하 테스트 온도 안전 중단 | **연속** |
+
+    연속 측정 경로는 샘플마다 UAC를 띄울 수 없다. → **앱을 승격해서 다시 실행**하는 것이
+    유일한 해법이라 `relaunch-elevated`를 두고, 첫 화면에서 안내한다(기본값은 비승격 유지).
+    실측 확인: 승격 상태에서는 `si.cpuTemperature()`가 정상 동작하므로(main=28.8,
+    cores=[27.8, 29.8]) 세 경로가 모두 자연스럽게 살아난다.
+
+    ⚠ `collectLiveSample()`은 1초마다 돌므로 **사유 확인을 캐시**해야 한다
+    (`cpuTempReason()`). 매번 PowerShell을 띄우면 그 자체가 부하가 된다.
+
 31. **`Out-File -Encoding utf8`은 Windows PowerShell에서 BOM을 붙인다.**
     승격 프로세스가 그렇게 쓴 JSON을 `JSON.parse`에 넣으면 그대로 던진다.
     파일로 결과를 주고받는 승격 경로에서는 읽을 때 BOM을 걷어낼 것.

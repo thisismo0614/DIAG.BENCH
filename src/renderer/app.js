@@ -394,6 +394,17 @@ async function renderNextSteps() {
   if (!box) return;
   const items = [];
 
+  // 온도를 못 읽는 상태이고 승격으로 해결 가능하면 그 사실과 방법을 먼저 알린다.
+  // 부하 테스트 안전 중단과 기준선 온도가 여기에 걸려 있다.
+  const elev = await window.diagAPI.getElevationState();
+  if (elev.canFixByElevating) {
+    items.push({
+      title: 'CPU 온도를 읽지 못하고 있습니다',
+      body: 'Windows가 CPU 온도를 관리자 권한에서만 알려줍니다. 지금 상태로는 부하 테스트의 온도 자동 중단과 기준선의 온도 기록을 쓸 수 없습니다. 관리자 권한으로 다시 실행하면 둘 다 동작합니다.',
+      cta: '관리자 권한으로 다시 실행', action: 'elevate',
+    });
+  }
+
   const baseline = await window.diagAPI.getBaseline();
   if (!baseline) {
     items.push({
@@ -418,9 +429,21 @@ async function renderNextSteps() {
     <div class="next-card">
       <div class="next-title">${escHtml(it.title)}</div>
       <p class="next-body">${escHtml(it.body)}</p>
-      <button class="btn next-go" data-screen="${escHtml(it.screen)}">${escHtml(it.cta)}</button>
+      <button class="btn next-go" ${it.action ? `data-action="${escHtml(it.action)}"` : `data-screen="${escHtml(it.screen)}"`}>${escHtml(it.cta)}</button>
     </div>`).join('');
-  box.querySelectorAll('.next-go').forEach((b) => b.addEventListener('click', () => {
+  box.querySelectorAll('.next-go').forEach((b) => b.addEventListener('click', async () => {
+    if (b.dataset.action === 'elevate') {
+      b.disabled = true;
+      b.textContent = '승인 창을 확인하세요...';
+      const res = await window.diagAPI.relaunchElevated();
+      if (!res.started) {
+        // 취소했으면 앱을 닫지 않는다 — 사용자가 그대로 계속 쓸 수 있어야 한다.
+        // 실패 사유를 구분해서 보여준다(다시 누르면 되는지, 다른 방법이 필요한지).
+        b.disabled = false;
+        b.textContent = res.reason === 'cancelled' ? '취소됨 — 다시 시도' : '실행하지 못했습니다 — 다시 시도';
+      }
+      return;
+    }
     document.querySelector(`[data-target="${b.dataset.screen}"]`).click();
   }));
 }
@@ -746,6 +769,7 @@ function renderBaseline(b) {
     `측정 시각: ${captured.toLocaleString('ko-KR')} (${ageDays === 0 ? '오늘' : `${ageDays}일 전`})`,
     `유효 샘플 ${b.idleSampleCount}/${b.sampleCount}개${b.durationSec ? ` · ${b.durationSec}초간 측정` : ''}`,
     b.cpuIdleTempSpreadC !== null ? `측정 중 CPU 온도 편차 ${b.cpuIdleTempSpreadC}°C` : null,
+    b.cpuTempNote,
     b.cpuModel ? `기준 CPU: ${b.cpuModel}` : null,
     b.gpuModel ? `기준 GPU: ${b.gpuModel}` : null,
     b.gpuNote,
@@ -840,7 +864,9 @@ document.getElementById('cpu-stress-start').addEventListener('click', async () =
     result.clockDroppedUnderLoad ? '⚠ 부하 중 클럭 하락이 감지되었습니다 (열 제한 또는 전력 관리 동작)' : '',
     // 센서가 없으면 "온도 안전장치가 동작한다"고 말하면 안 된다.
     result.tempSensorAvailable === false
-      ? `⚠ 이 시스템은 CPU 온도 센서를 읽을 수 없어 온도 기반 자동 중단을 쓸 수 없습니다. 대신 ${result.effectiveDurationSec}초 시간 제한 안전 모드로 실행했습니다.`
+      ? (result.tempUnavailableReason === 'permission'
+        ? `⚠ 관리자 권한이 없어 CPU 온도를 읽지 못해, 온도 기반 자동 중단 대신 ${result.effectiveDurationSec}초 시간 제한 안전 모드로 실행했습니다. 관리자 권한으로 실행하면 온도 안전장치를 쓸 수 있습니다.`
+        : `⚠ 이 시스템은 CPU 온도를 읽을 수 없어 온도 기반 자동 중단을 쓸 수 없습니다. 대신 ${result.effectiveDurationSec}초 시간 제한 안전 모드로 실행했습니다.`)
       : '',
     result.loadAchieved === false ? `⚠ 부하가 ${Math.round(result.maxLoadPercent)}%까지밖에 올라가지 않아 충분히 밀어붙였다고 보기 어렵습니다.` : '',
     result.aborted ? `중단 사유: ${result.abortReason}` : '',

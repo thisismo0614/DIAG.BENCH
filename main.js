@@ -169,6 +169,59 @@ ipcMain.handle('retry-cpu-temp-elevated', async (event, { raw, symptom } = {}) =
   return { report, raw: newRaw, measured: result.tempC !== null, reason: result.reason };
 });
 
+// ================= 관리자 권한으로 다시 실행 =================
+// 부하 테스트의 온도 안전 중단과 기준선의 온도 기록은 **1초 간격으로 연속 측정**하므로
+// 샘플마다 UAC를 띄울 수 없다(전체 진단처럼 한 번만 읽는 경우에는 재측정으로 해결된다).
+// 그 둘을 쓰려면 앱 자체가 승격되어 있어야 해서, 사용자가 원할 때만 다시 띄운다.
+//
+// ⚠ 기본값은 여전히 비승격이다. 진단 도구가 늘 관리자 권한으로 도는 것은 바람직하지 않다.
+ipcMain.handle('get-elevation-state', async () => {
+  const probe = await collectors.probeCpuTemperature();
+  return {
+    // 온도를 읽을 수 있으면 승격 상태이거나 권한이 필요 없는 환경이다.
+    canReadTemp: probe.reason === 'ok',
+    reason: probe.reason,
+    // 승격으로 해결 가능한 경우에만 재실행을 권한다.
+    canFixByElevating: probe.reason === 'permission',
+  };
+});
+
+ipcMain.handle('relaunch-elevated', async () => {
+  if (process.platform !== 'win32') return { started: false, reason: 'windows-only' };
+  const exe = process.execPath;
+  // 개발 중(electron.exe로 실행)에는 앱 경로도 함께 넘겨야 같은 앱이 뜬다.
+  const args = app.isPackaged ? [] : [app.getAppPath()];
+  const psArgs = args.length
+    ? `-FilePath '${exe.replace(/'/g, "''")}' -ArgumentList '${args[0].replace(/'/g, "''")}' -Verb RunAs`
+    : `-FilePath '${exe.replace(/'/g, "''")}' -Verb RunAs`;
+  // ⚠ 실패 사유를 stderr에서 읽으려 하면 안 된다. `-NonInteractive`로 띄운 PowerShell의
+  //   stderr는 **CLIXML로 감싸여** 나와서 원문 메시지를 찾을 수 없다(실측으로 확인).
+  //   그래서 PowerShell이 직접 판정해 **우리가 정한 표식을 stdout으로** 찍게 한다.
+  //   Windows 표시 언어와도 무관해진다.
+  const script = `try { Start-Process ${psArgs} -ErrorAction Stop; 'DB_OK' } catch { 'DB_FAIL' }`;
+  const encoded = Buffer.from(script, 'utf16le').toString('base64');
+
+  // ⚠ 실패 사유를 버리지 않는다. "사용자가 취소함"과 "실행 자체가 실패함"은
+  //   사용자가 취할 행동이 다르다 — 전자는 다시 누르면 되고, 후자는 다른 방법이 필요하다.
+  const stdout = await new Promise((resolve) => {
+    require('child_process').execFile(
+      'powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
+      // ⚠ UAC 창은 사람이 눈치채고 누를 때까지 떠 있다. Windows 자체 대기 시간이 약 2분이라
+      //   여기 타임아웃이 그보다 짧으면, 사용자가 누르기 전에 우리가 죽여버려서
+      //   "실행 실패"로 잘못 보고하게 된다(실측으로 겪음 — 60초는 부족했다).
+      { windowsHide: true, timeout: 150000 },
+      (err, out) => resolve((out || '').toString())
+    );
+  });
+
+  const started = /DB_OK/.test(stdout);
+  // DB_FAIL은 사실상 UAC 거부다(명령 자체가 잘못됐다면 표식도 안 찍힌다).
+  const reason = started ? null : (/DB_FAIL/.test(stdout) ? 'cancelled' : 'launch-failed');
+  // 승격된 인스턴스가 떴을 때만 이 창을 닫는다. 취소했는데 닫으면 앱이 통째로 사라진다.
+  if (started) setTimeout(() => app.quit(), 800);
+  return { started, reason };
+});
+
 // ================= 디스플레이 셀프체크 기록 =================
 // 불량화소/잔상/균일도는 사람이 눈으로 봐야 판단할 수 있어 자동 검사가 불가능하다.
 // 사용자가 "디스플레이 테스트" 화면에서 직접 본 결과를 기록하면, 그 값을 전체 진단의
