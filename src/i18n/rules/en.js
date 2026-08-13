@@ -42,6 +42,76 @@ const range = (from, to, unit) => (from !== null && from !== undefined && to !==
 const tempRange = (p) => range(p.startTempC, p.endTempC, '°C');
 const clockRange = (p) => range(p.startClockMHz, p.endClockMHz, ' MHz');
 
+const num = (v) => (v === null || v === undefined ? '?' : Number(v).toLocaleString('en-US'));
+
+// 메모리 속도 표기. 원문(memoryConfig.js의 speedLabel)과 같은 규칙을 영어로 쓴다.
+const speed = (type, mts) => (mts === null || mts === undefined
+  ? 'unknown'
+  : `${mts} MT/s${type ? ` (${type})` : ''}`);
+
+// 기준선 항목 이름. 원문의 라벨은 한국어라 key로 받아 여기서 붙인다(src/engine/baseline.js).
+const BASELINE_LABELS = {
+  cpuIdleTempC: 'Idle CPU temperature',
+  cpuIdleLoadPercent: 'Idle CPU usage',
+  gpuIdleTempC: 'Idle GPU temperature',
+  memIdleUsedPercent: 'Idle memory usage',
+};
+const baselineLabel = (key) => BASELINE_LABELS[key] || 'This measurement';
+const baselineAge = (days) => (days === 0 ? 'today' : `${days} day${days === 1 ? '' : 's'} ago`);
+
+// 디스플레이 셀프체크 이름 (src/engine/displayChecks.js의 TESTS)
+const DISPLAY_TESTS = {
+  'DISP-04': 'dead pixel test',
+  'DISP-02': 'ghosting and response test',
+  'DISP-08': 'brightness uniformity test',
+};
+const displayTest = (id) => DISPLAY_TESTS[id] || 'display self-check';
+
+// 변경된 설정 항목 이름 (rules.js의 changedKeys)
+const CONFIG_LABELS = {
+  cpuBaseClock: 'CPU base clock',
+  gpuPowerLimit: 'GPU power limit',
+  memoryProfile: 'memory profile',
+};
+const configLabel = (key) => CONFIG_LABELS[key] || key;
+
+// 이벤트 계통 요약. 원문의 breakdown이 이미 한국어로 조립돼 있어 건수만 받아 다시 만든다.
+function eventBreakdown(c) {
+  const t = c || {};
+  return [
+    `unexpected shutdown (Kernel-Power 41) ${t.kernelPower || 0}`,
+    `hardware error (WHEA, uncorrectable) ${t.whea || 0}`,
+    `blue screen (BugCheck) ${t.bugcheck || 0}`,
+    `graphics driver recovery (TDR) ${t.display || 0}`,
+    `disk/NTFS error ${(t.disk || 0) + (t.ntfs || 0)}`,
+  ].join(' · ');
+}
+
+// "어느 쪽부터 확인할지"를 같은 기간의 다른 이벤트 유무로 좁혀준다.
+// 원문(rules.js의 priorityNote)과 같은 판단을 영어로 다시 쓴 것이다 — 판단 자체는 바뀌지 않는다.
+function kernelPowerPriority(c) {
+  const t = c || {};
+  const companions = [];
+  if (t.whea > 0) companions.push(`${t.whea} WHEA error(s)`);
+  if (t.bugcheck > 0) companions.push(`${t.bugcheck} blue screen(s)`);
+  if (t.display > 0) companions.push(`${t.display} graphics driver error(s)`);
+  return companions.length
+    ? `${companions.join(', ')} were recorded in the same period, so it is worth checking whether they share a cause first.`
+    : 'No hardware errors (WHEA), blue screens or graphics driver errors were recorded in the same period. That gives some reason to look first at power delivery or a protective shutdown from overheating rather than a software crash (the cause is not established).';
+}
+
+// 상관관계 이슈가 다른 이슈에서 베껴 온 이름·근거를 영어로 다시 만든다.
+const EVENT_NAMES = {
+  'EVENT-WHEA': 'hardware error events (WHEA)',
+  'EVENT-BUGCHECK': 'blue screen records',
+  'EVENT-KERNEL-POWER': 'unexpected shutdown/restart records',
+};
+const eventName = (id) => EVENT_NAMES[id] || 'hardware error events';
+const eventFirstEvidence = (e) => {
+  const p = (e && e.params) || {};
+  return `${eventName(e && e.id)}: ${p.count ?? '?'} in the last ${p.days ?? '?'} days`;
+};
+
 module.exports = {
   // ---------- CPU: temperature and load ----------
   'CPU-TEMP-CRITICAL': {
@@ -671,6 +741,292 @@ module.exports = {
     // 근거 줄이 실패한 속성 개수만큼 만들어진다 — 원문과 같은 배열을 돈다.
     evidence: (p) => (p.failingNow || []).map((f) => `${f.name} (ID ${f.id}) — below threshold`),
     verification: 'After backing up, cross-check with the manufacturer’s diagnostic tool.',
+  },
+
+  // ---------- Memory configuration (src/engine/memoryConfig.js) ----------
+  // 제목·원인·조치·재검사는 issueDb(MEMORY-*)의 번역본에서 온다. 설명·근거만 여기 있다.
+  'MEMCFG-MIXED-BELOW-RATED': {
+    explanation: (p) => `The ${p.moduleCount} modules have different specifications (${(p.partNumbers || []).join(' / ')}), so the memory controller appears to be running at the most conservative setting. It is currently running at ${speed(p.type, p.currentSpeed)}, while the highest rating reported by any module is ${speed(p.type, p.highestRated)}.`,
+    evidence: (p) => [
+      `Currently ${speed(p.type, p.currentSpeed)} / highest rating ${speed(p.type, p.highestRated)} — a gap of ${p.gap} MT/s`,
+      `Mixed configuration: ${(p.modules || []).map((m) => `${m.slot} ${m.capacityGB}GB ${m.name || 'unknown model'} ${m.ratedSpeedMTs || '?'}MT/s`).join(' | ')}`,
+      'What was measured goes as far as "running below the rating" — the list of available profiles cannot be read from the OS, so it was not checked',
+    ],
+  },
+
+  'MEMCFG-BELOW-RATED': {
+    explanation: (p) => `The modules report a rating of ${speed(p.type, p.highestRated)}, but they are currently running at ${speed(p.type, p.currentSpeed)}.`,
+    evidence: (p) => [
+      `Currently ${speed(p.type, p.currentSpeed)} / highest rating ${speed(p.type, p.highestRated)} — a gap of ${p.gap} MT/s`,
+      'What was measured goes as far as "running below the rating" — the list of available profiles cannot be read from the OS, so it was not checked',
+    ],
+  },
+
+  'MEMCFG-ABOVE-RATED': {
+    explanation: (p) => `The modules report a rating of ${speed(p.type, p.highestRated)}, but they are currently running at ${speed(p.type, p.currentSpeed)}. A memory profile has been applied, or the setting was changed by hand. That is not a fault in itself, but it can be a source of stability problems, so it is worth knowing.`,
+    evidence: (p) => [
+      `Currently ${speed(p.type, p.currentSpeed)} / module rating ${speed(p.type, p.highestRated)}`,
+      'All that is confirmed is that a setting was changed — it does not mean the system is unstable',
+    ],
+  },
+
+  'MEMCFG-SINGLE-CHANNEL': {
+    explanation: (p) => `All ${p.moduleCount} modules are in channel ${p.channel}. Splitting them across two channels increases memory bandwidth, which can make a visible difference with integrated graphics and in games. This is a configuration issue, not a fault.`,
+    evidence: (p) => [
+      `Populated slots: ${(p.slots || []).join(', ')}`,
+      `Channels found: ${(p.channels || []).join(', ')}`,
+    ],
+  },
+
+  // ---------- Configuration state (src/engine/overclock.js) ----------
+  'OC-CPU-BASE-CLOCK': {
+    explanation: (p) => `The stock base clock for this CPU is ${p.stockBaseGHz} GHz, but the system reports ${p.maxClockGHz} GHz (about ${p.pct}% higher). The base clock (BCLK) or the multiplier appears to have been adjusted in the BIOS. That is not a fault in itself, but on a second-hand PC it may be a setting left by the previous owner, so it is worth knowing.`,
+    evidence: (p) => [
+      `Stock base clock ${p.stockBaseGHz} GHz (from the model name) / system reports ${p.maxClockGHz} GHz`,
+      ...(p.bclkMHz ? [`BCLK ${p.bclkMHz} MHz (differs from the usual default of ${p.typicalBclkMHz} MHz)`] : []),
+      'All that is confirmed is that a setting was changed — it does not mean the system is unstable',
+    ],
+  },
+
+  // ⚠ 이 항목만은 제목과 조치를 카탈로그가 직접 만든다. 원문이 방향(상향/하향)과
+  //    되돌릴 실제 값을 여기서 채워 넣기 때문이다 — 지식 DB 것을 그대로 쓰면 숫자가 사라진다.
+  'OC-GPU-POWER-LIMIT': {
+    title: (p) => `The GPU power limit differs from the default (${p.raised ? 'raised' : 'lowered'})`,
+    explanation: (p) => `The default power limit for this GPU is ${p.defaultPowerLimitW} W, but it is currently set to ${p.powerLimitW} W. `
+      + (p.raised
+        ? 'Raising the power limit can improve performance, but heat and power draw rise with it. '
+        : 'Lowering the power limit reduces heat and power draw, but caps performance. ')
+      + 'This is a setting, not a fault.',
+    actions: (p) => [
+      'Confirm this was intended (on a second-hand PC, it may be the previous owner’s setting)',
+      'Run the GPU stress test on the Stability tab to confirm the current setting causes no problems',
+      `To restore the default, run nvidia-smi -pl ${p.defaultPowerLimitW} (requires administrator rights)`,
+    ],
+    evidence: (p) => [
+      `Current power limit ${p.powerLimitW} W / default ${p.defaultPowerLimitW} W`,
+      ...(p.minPowerLimitW !== null && p.minPowerLimitW !== undefined
+        && p.maxPowerLimitW !== null && p.maxPowerLimitW !== undefined
+        ? [`Range this GPU allows: ${p.minPowerLimitW}–${p.maxPowerLimitW} W`] : []),
+      'The driver’s own reported values were compared directly, so this is certain',
+    ],
+  },
+
+  // ---------- Baseline comparison ----------
+  // 원인·조치·재검사·Wizard는 issueDb(BASELINE-IDLE-*)의 번역본을 그대로 쓴다.
+  // 여기에는 측정값이 들어간 제목·설명·근거만 둔다 — reportI18n.js 주석 참고.
+  'BASELINE-RISE-TEMP': {
+    title: (p) => `${baselineLabel(p.key)} is higher than usual`,
+    explanation: (p) => `This PC normally runs ${baselineLabel(p.key).toLowerCase()} at ${p.baselineVal}${p.unit}; right now it is ${p.currentVal}${p.unit}, ${p.diff}${p.unit} higher. In absolute terms that is not yet a dangerous range, but a change from this machine's own normal can be a sign that cooling has degraded.`,
+    evidence: (p) => [
+      `Baseline ${p.baselineVal}${p.unit} (measured ${baselineAge(p.ageDays)}, ${p.sampleCount ?? '?'} samples)`,
+      `Current ${p.currentVal}${p.unit}`,
+      `Difference ${p.sign}${p.diff}${p.unit}`,
+      'Compared idle state against idle state',
+      ...(p.stale ? [`The baseline is ${p.ageDays} days old, so the room temperature may have changed since — we treat this evidence as weaker`] : []),
+      ...(p.watch ? ['Within a range that a change in room temperature alone could explain — watching rather than concluding'] : []),
+    ],
+  },
+
+  'BASELINE-RISE-MEMORY': {
+    title: (p) => `${baselineLabel(p.key)} is higher than usual`,
+    explanation: (p) => `This PC normally runs ${baselineLabel(p.key).toLowerCase()} at ${p.baselineVal}${p.unit}; right now it is ${p.currentVal}${p.unit}. In the same idle state it is using ${p.diff}${p.unit} more.`,
+    evidence: (p) => [
+      `Baseline ${p.baselineVal}${p.unit} (measured ${baselineAge(p.ageDays)}, ${p.sampleCount ?? '?'} samples)`,
+      `Current ${p.currentVal}${p.unit}`,
+      `Difference ${p.sign}${p.diff}${p.unit}`,
+      'Compared idle state against idle state',
+      ...(p.stale ? [`The baseline is ${p.ageDays} days old, so conditions may have changed since — we treat this evidence as weaker`] : []),
+      ...(p.watch ? ['Within a range that ordinary variation could explain — watching rather than concluding'] : []),
+    ],
+  },
+
+  // ---------- Battery ----------
+  // 제목·원인·조치·재검사는 issueDb(BATTERY-CAPACITY-DEGRADED)에서 온다. title을 두지 않는다.
+  'BATTERY-DEGRADED': {
+    explanation: (p) => `Against a design capacity of ${num(p.designCapacityMWh)} mWh, the current full charge capacity is ${num(p.fullChargeCapacityMWh)} mWh — ${p.healthPercent}%. `
+      + (p.severe
+        ? 'That is enough to noticeably shorten how long the machine runs on battery.'
+        : 'It is below the 80% commonly used as a battery warranty benchmark, so degradation appears to be under way.'),
+    evidence: (p) => [
+      `Design ${num(p.designCapacityMWh)} mWh / full charge ${num(p.fullChargeCapacityMWh)} mWh = ${p.healthPercent}%`,
+      ...(p.cycleCount !== null && p.cycleCount !== undefined
+        ? [`${num(p.cycleCount)} charge cycles — rated cycle counts range from 300 to 1000 depending on the model, so this figure alone was not used to judge`] : []),
+      ...(p.chargePercent !== null && p.chargePercent !== undefined && p.chargePercent < 90
+        ? [`Charge level at measurement ${p.chargePercent}% — the value may differ once fully charged`] : []),
+    ],
+  },
+
+  // ---------- Display ----------
+  'DISPLAY-REFRESH-LOW': {
+    title: (p) => `${p.model} is set to a low refresh rate`,
+    explanation: (p) => `It currently reports ${p.refreshRateHz} Hz.`,
+    causes: [
+      'Fixed to a low refresh rate in the display settings',
+      'The cable or port does not support a higher refresh rate',
+    ],
+    actions: [
+      'Check and change the refresh rate in Windows display settings',
+      'Check the DisplayPort/HDMI cable specification',
+    ],
+    evidence: (p) => [`Current refresh rate ${p.refreshRateHz} Hz`],
+    verification: 'After changing the setting, confirm the applied refresh rate again in the display settings.',
+  },
+
+  'DISPLAY-VISUAL-CHECK-ISSUE': {
+    title: (p) => `A problem was confirmed in the ${displayTest(p.testId)}`,
+    explanation: (p) => `The user looked at the screen on ${enDate(p.checkedAt)} and recorded finding a problem.${p.note ? ` Note: "${p.note}"` : ''}`,
+    causes: ['A physical defect in the panel itself', 'A bad cable or port connection'],
+    actions: [
+      'Re-check at a different brightness and viewing angle',
+      'If possible, re-check through a different cable or port',
+      'If it is confirmed repeatedly, contact the manufacturer for service',
+    ],
+    evidence: (p) => [`User self-check: ${displayTest(p.testId)} — problem found`],
+    verification: 'Run the check again from the "Display test" screen to confirm.',
+  },
+
+  // ---------- Windows event log ----------
+  // breakdown("이벤트 내역")은 원문에서 이미 한국어로 조립돼 있다. 건수를 받아 다시 만든다.
+  'EVENT-WHEA': {
+    title: (p) => `${p.count} hardware error event(s) (WHEA) found`,
+    explanation: (p) => `Over the last ${p.days} days Windows recorded hardware-level errors in the CPU, memory or PCIe. If they repeat, a hardware fault is possible.`,
+    causes: [
+      'Faulty memory',
+      'An unstable CPU (overclocking and similar)',
+      'Poor contact on a PCIe device such as the GPU',
+      'Unstable power delivery',
+    ],
+    actions: [
+      'Reset any recent overclock or voltage settings',
+      'Reseat the RAM and try different slots',
+      'Reseat PCIe cards such as the GPU',
+    ],
+    evidence: (p) => [
+      `${p.count} in the last ${p.days} days`,
+      ...(p.latest ? [`Most recent: ${p.latest}`] : []),
+      `Event breakdown: ${eventBreakdown(p.counts)}`,
+    ],
+    verification: 'Reset the settings, use the machine for a few days, and check whether WHEA errors reappear in the event log.',
+  },
+
+  'EVENT-WHEA-CORRECTED': {
+    title: (p) => `${p.count} corrected hardware error(s) (WHEA) recorded`,
+    explanation: (p) => `Over the last ${p.days} days the hardware detected errors but corrected them itself. Corrected errors are relatively common and do not by themselves indicate a fault. If the count keeps climbing, though, it is worth watching.`,
+    causes: [
+      'Intermittent correctable errors on the memory or PCIe link',
+      'Borderline operation caused by overclocking',
+    ],
+    actions: [
+      'Nothing needs doing right now',
+      'Check every few days whether the count keeps rising',
+      'If you overclocked, compare against default settings',
+    ],
+    evidence: (p) => [
+      `${p.count} corrected error(s) in the last ${p.days} days`,
+      'Zero uncorrectable errors — the system recovered successfully',
+    ],
+    verification: 'Re-run the diagnosis in a few days and compare whether the corrected error count has grown noticeably.',
+  },
+
+  'EVENT-BUGCHECK': {
+    title: (p) => `${p.count} blue screen (system crash) record(s)`,
+    explanation: (p) => `Windows was forced to restart by a fatal error over the last ${p.days} days.`,
+    causes: ['A driver problem', 'Faulty memory', 'Unstable hardware'],
+    actions: [
+      'Check drivers you installed or updated recently',
+      'Check Windows Update',
+      'If it repeats, run the Windows Memory Diagnostic',
+    ],
+    evidence: (p) => [
+      `${p.count} in the last ${p.days} days`,
+      ...(p.latest ? [`Most recent: ${p.latest}`] : []),
+      `Event breakdown: ${eventBreakdown(p.counts)}`,
+    ],
+    verification: 'After making a change, use the machine for a few days and check whether blue screens recur.',
+  },
+
+  'EVENT-KERNEL-POWER': {
+    title: (p) => `${p.count} unexpected shutdown/restart record(s)`,
+    explanation: (p) => 'The machine lost power or restarted without going through a normal shutdown. '
+      + kernelPowerPriority(p.counts),
+    causes: [
+      'Unstable power delivery (PSU, power cable, power strip)',
+      'A protective shutdown caused by overheating',
+      'An external power problem such as a brief outage',
+      'An unstable CPU or GPU overclock',
+      'The user holding the power button to force a shutdown',
+    ],
+    actions: [
+      'Start with the power cable and power strip (the simplest and most common cause)',
+      'Reset any overclock settings',
+      'Apply load with the stability tests and see whether it reproduces',
+      'Check whether the shutdown times line up with temperature records',
+    ],
+    evidence: (p) => [
+      `${p.count} in the last ${p.days} days`,
+      ...(p.latest ? [`Most recent: ${p.latest}`] : []),
+      `Event breakdown: ${eventBreakdown(p.counts)}`,
+    ],
+    verification: 'Run the CPU stress test on the Stability tab and see whether it reproduces.',
+  },
+
+  'EVENT-DISPLAY-TDR': {
+    title: (p) => `${p.count} graphics driver timeout/recovery record(s)`,
+    explanation: 'The GPU driver stopped responding and Windows attempted to recover it (TDR). This can happen even when GPU temperature and clocks look fine.',
+    causes: [
+      'A damaged or problematic graphics driver version',
+      'An unstable GPU overclock',
+      'Unstable GPU hardware',
+    ],
+    actions: [
+      'Fully reinstall the graphics driver (a clean-install tool such as DDU is recommended)',
+      'Reset any GPU overclock',
+    ],
+    evidence: (p) => [
+      `${p.count} in the last ${p.days} days`,
+      ...(p.latest ? [`Most recent: ${p.latest}`] : []),
+      `Event breakdown: ${eventBreakdown(p.counts)}`,
+    ],
+    verification: 'After reinstalling the driver, run the same game or workload and check whether it recurs.',
+  },
+
+  'EVENT-DISK-NTFS': {
+    title: (p) => `${p.count} storage/file system error event(s)`,
+    explanation: 'Errors were recorded at the disk I/O or NTFS file system level.',
+    causes: ['A worn or faulty drive', 'A bad SATA/NVMe connection', 'File system damage'],
+    actions: [
+      'Check the SMART status on the Storage tab',
+      'Re-check the cable and connection',
+      'Consider running chkdsk',
+    ],
+    evidence: (p) => [
+      `disk ${p.disk}, Ntfs ${p.ntfs}`,
+      `Event breakdown: ${eventBreakdown(p.counts)}`,
+    ],
+    verification: 'Check the SMART status and the throughput test again on the Storage tab.',
+  },
+
+  'EVENT-APP-ERROR': {
+    title: (p) => `A program has repeatedly crashed (${p.count} record(s))`,
+    explanation: 'These are not hardware-related events; the program itself may be at fault.',
+    causes: ['A program version or compatibility problem', 'An interaction between the program and a driver'],
+    actions: ['Update or reinstall the program'],
+    evidence: (p) => [`${p.count} in the last ${p.days} days`],
+    verification: 'Update the program, repeat the same work, and check whether it recurs.',
+  },
+
+  // ---------- Correlation: changed settings × hardware errors ----------
+  // 제목·원인·조치·재검사는 issueDb(CONFIG-STABILITY-INVESTIGATION)에서 온다.
+  'CONFIG-STABILITY-CORRELATION': {
+    explanation: (p) => `${(p.changedKeys || []).map(configLabel).join(' · ')} `
+      + `${(p.changedKeys || []).length === 1 ? 'differs' : 'differ'} from the default, and the recent Windows event log contains `
+      + `${(p.events || []).map((e) => eventName(e.id)).join(', ')}. `
+      + 'That does not prove the settings are the cause, but the two appearing together makes this the first combination worth checking.',
+    evidence: (p) => [
+      `Changed items: ${(p.changedKeys || []).map(configLabel).join(', ')}`,
+      ...(p.events || []).map((e) => eventFirstEvidence(e)),
+      'What is confirmed is that the two were observed together — no causal link has been established',
+    ],
   },
 
   // ---------- Drivers ----------

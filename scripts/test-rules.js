@@ -2929,6 +2929,63 @@ test('[핵심] id를 붙인 이슈는 실제로 발동시켰을 때 전부 번�
     })),
   ];
 
+  // 기준선 대비 상승 (유휴 상태여야 비교한다)
+  scenarios.push(buildReport(baseInput({
+    cpu: { model: 'Test CPU', loadPercent: 5, tempC: 62, clockGHz: 1.2 },
+    memory: { totalGB: 16, usedGB: 9, availableGB: 7, usedPercent: 56, swapTotalGB: 8, swapUsedGB: 1 },
+    baseline: baselineRecord(),
+  })));
+  // 배터리 열화 (제목·원인·조치는 지식 DB에서 온다)
+  scenarios.push(buildReport(baseInput({ battery: battery({ healthPercent: 55, fullChargeCapacityMWh: 44000 }) })));
+  // 디스플레이: 낮은 주사율 + 사용자 셀프체크 이상
+  scenarios.push(buildReport(baseInput({
+    display: [{ model: 'Test Monitor', resolutionX: 1920, resolutionY: 1080, refreshRateHz: 50 }],
+    visualChecks: [{
+      testId: 'DISP-04', label: '불량화소 테스트', verdict: 'issue',
+      note: '좌상단에 밝은 점', checkedAt: '2026-08-01T00:00:00Z',
+    }],
+  })));
+  // 이벤트 로그 전 계통 + 설정 변경 상관관계
+  const ev = (provider, id, level, message) => ({ time: '2026-08-01T00:00:00Z', provider, id, level, message });
+  scenarios.push(buildReport(baseInput({
+    overclockState: ocState({ cpu: { maxClockGHz: 4.2 }, gpu: { powerLimitW: 140 } }),
+    eventLog: {
+      supported: true, days: 7, error: null,
+      events: [
+        ev('Microsoft-Windows-WHEA-Logger', 1, 'Error', 'A fatal hardware error has occurred.'),
+        ev('Microsoft-Windows-WHEA-Logger', 47, 'Warning', 'A corrected hardware error has occurred.'),
+        ev('BugCheck', 1001, 'Error', 'The computer has rebooted from a bugcheck.'),
+        ev('Microsoft-Windows-Kernel-Power', 41, 'Critical', 'The system has rebooted without cleanly shutting down first.'),
+        ev('Display', 4101, 'Error', 'Display driver nvlddmkm stopped responding and has successfully recovered.'),
+        ev('disk', 7, 'Error', 'The device has a bad block.'),
+        ev('Ntfs', 55, 'Error', 'The file system structure on the disk is corrupt.'),
+        ev('Application Error', 1000, 'Error', 'Faulting application name: a.exe'),
+        ev('Application Error', 1000, 'Error', 'Faulting application name: a.exe'),
+        ev('Application Error', 1000, 'Error', 'Faulting application name: a.exe'),
+      ],
+    },
+  })));
+
+  // 메모리 구성 판정 (memoryConfig.js가 만들어 findings로 넘긴다)
+  scenarios.push(buildReport(baseInput({
+    memoryModules: memMods([
+      dimm({ slot: 'ChannelA-DIMM0', partNumber: 'AAA-3200', ratedSpeedMTs: 3200, configuredSpeedMTs: 2666 }),
+      dimm({ slot: 'ChannelB-DIMM0', partNumber: 'BBB-2666', ratedSpeedMTs: 2666, configuredSpeedMTs: 2666 }),
+    ]),
+  })));
+  scenarios.push(buildReport(baseInput({
+    memoryModules: memMods([
+      dimm({ slot: 'ChannelA-DIMM0', ratedSpeedMTs: 3200, configuredSpeedMTs: 2133 }),
+      dimm({ slot: 'ChannelB-DIMM0', ratedSpeedMTs: 3200, configuredSpeedMTs: 2133 }),
+    ]),
+  })));
+  scenarios.push(buildReport(baseInput({
+    memoryModules: memMods([
+      dimm({ slot: 'ChannelA-DIMM0', ratedSpeedMTs: 2666, configuredSpeedMTs: 3200 }),
+      dimm({ slot: 'ChannelA-DIMM1', ratedSpeedMTs: 2666, configuredSpeedMTs: 3200 }),
+    ]),
+  })));
+
   const exercised = new Set();
   const untranslated = [];
   scenarios.forEach((rep) => {
@@ -2966,8 +3023,16 @@ test('[핵심] id를 붙인 이슈는 실제로 발동시켰을 때 전부 번�
 
 test('rules.js의 메시지 id와 카탈로그가 정확히 대응한다', () => {
   // 오타 하나면 그 이슈는 조용히 한국어로 남는다. 눈으로는 못 잡는다.
-  const src = require('fs').readFileSync(require('path').join(__dirname, '../src/engine/rules.js'), 'utf-8');
-  const inRules = [...src.matchAll(/\{ id: '([A-Z0-9-]+)'/g)].map((m) => m[1]);
+  // ⚠ 판정을 만드는 모듈이 rules.js만은 아니다. 설정 변경 판정은 memoryConfig/overclock이
+  //    만들어 findings로 넘긴다 — 한 파일만 보면 "아무도 안 쓰는 항목"이라고 잘못 보고한다.
+  const src = ['rules.js', 'memoryConfig.js', 'overclock.js']
+    .map((f) => require('fs').readFileSync(require('path').join(__dirname, '../src/engine', f), 'utf-8'))
+    .join('\n');
+  // id가 삼항식으로 갈리는 곳도 있다(`id: isTemp ? 'A' : 'B'`). 줄 단위로 대문자 리터럴을
+  // 전부 걷는다 — 한쪽만 세면 "아무도 쓰지 않는 항목"이라고 잘못 보고한다.
+  const inRules = src.split('\n')
+    .filter((l) => /\bid:\s/.test(l))
+    .flatMap((l) => [...l.matchAll(/'([A-Z][A-Z0-9-]{2,})'/g)].map((m) => m[1]));
   const inCatalog = Object.keys(require('../src/i18n/rules/en'));
 
   const dupes = inRules.filter((v, i) => inRules.indexOf(v) !== i);
@@ -2988,12 +3053,18 @@ test('카탈로그의 모든 항목이 원문과 같은 모양이다', () => {
   assert.ok(ids.length >= 20, `카탈로그가 비었음 (${ids.length}개)`);
   ids.forEach((id) => {
     const e = catalog[id];
-    ['title', 'explanation'].forEach((k) => {
-      assert.ok(e[k], `${id}: ${k} 없음`);
-      const v = typeof e[k] === 'function' ? e[k]({}) : e[k];
-      assert.ok(typeof v === 'string' && v.trim(), `${id}: ${k}가 빈 문장`);
-    });
+    // explanation은 측정값이 들어가므로 언제나 여기 있어야 한다.
+    // title·causes·actions·verification은 **없을 수 있다** — 지식 DB(issueDb)에서 그대로
+    // 가져오는 이슈는 그쪽 번역본을 쓰기 때문이다(reportI18n.js의 knowledgeOverlay).
+    // 여기에 또 적어두면 같은 문장의 원본이 둘이 되고 언젠가 어긋난다.
+    const v = typeof e.explanation === 'function' ? e.explanation({}) : e.explanation;
+    assert.ok(typeof v === 'string' && v.trim(), `${id}: explanation이 없거나 빈 문장`);
+    if (e.title !== undefined) {
+      const t = typeof e.title === 'function' ? e.title({ errors: 0, count: 0 }) : e.title;
+      assert.ok(typeof t === 'string' && t.trim(), `${id}: title이 빈 문장`);
+    }
     ['causes', 'actions'].forEach((k) => {
+      if (e[k] === undefined) return;
       // 값에 따라 문구가 달라지는 항목은 배열 **전체**가 함수다. 원소 하나만 함수로 두면
       // 번역기가 문자열이 아니라고 판단해 그 이슈가 통째로 한국어로 떨어진다.
       const arr = typeof e[k] === 'function' ? e[k]({ over: true, failingNow: [] }) : e[k];
@@ -3001,15 +3072,16 @@ test('카탈로그의 모든 항목이 원문과 같은 모양이다', () => {
       arr.forEach((s) => assert.ok(typeof s === 'string' && s.trim(),
         `${id}: ${k}에 문자열이 아닌 항목이 있음 (배열 전체를 함수로 두세요)`));
     });
-    // verification이 없어도 되는 이슈가 있다(원문에도 없는 경우). 있으면 비어 있으면 안 된다.
     if (e.verification !== undefined) {
       assert.ok(String(e.verification).trim(), `${id}: 재검사 방법이 빈 문자열`);
     }
     // 영어 카탈로그에 한글이 남아 있으면 안 된다(런타임 메시지 보간은 params라 여기 없다).
     const flat = JSON.stringify([
-      typeof e.title === 'function' ? e.title({ errors: 0 }) : e.title,
+      typeof e.title === 'function' ? '' : e.title,
       typeof e.explanation === 'function' ? '' : e.explanation,
-      e.causes, e.actions, e.verification,
+      typeof e.causes === 'function' ? '' : e.causes,
+      typeof e.actions === 'function' ? '' : e.actions,
+      e.verification,
     ]);
     assert.ok(!/[가-힣]/.test(flat), `${id}: 영어 카탈로그에 한글이 있음`);
   });

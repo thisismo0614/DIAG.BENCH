@@ -40,7 +40,10 @@ function issueFromFinding(f) {
     f.level, f.title, f.explanation, f.causes,
     details.map((a) => a.text),
     CONFIDENCE_SCORE[f.confidence] ?? null,
-    f.evidence, f.verification
+    f.evidence, f.verification,
+    // 판정을 만든 모듈(memoryConfig/overclock)이 붙여준 메시지 id를 그대로 넘긴다.
+    // 제목·원인·조치·재검사는 ruleId를 통해 지식 DB의 번역본에서 온다.
+    f.msg || null
   );
   issue.ruleId = f.ruleId;             // 어떤 규칙이 이 판정을 냈는지 (기획서 §12)
   issue.ruleVersion = f.ruleVersion;   // 판정 로직이 바뀌어도 과거 결과를 설명할 수 있게 (§60)
@@ -487,7 +490,15 @@ function baselineFindings(comparison, section) {
       ? `이 PC의 평소 ${d.label}는 ${d.baselineVal}${d.unit}였는데 지금은 ${d.currentVal}${d.unit}로 ${d.diff}${d.unit} 높습니다. 절대 온도로는 아직 위험 범위가 아니지만, 같은 PC의 평소와 달라졌다는 점이 냉각 성능 저하의 신호일 수 있습니다.`
       : `이 PC의 평소 ${d.label}은 ${d.baselineVal}${d.unit}였는데 지금은 ${d.currentVal}${d.unit}입니다. 같은 유휴 상태인데도 ${d.diff}${d.unit} 더 쓰고 있습니다.`;
     const issue = mkIssue(d.level, `${d.label}${isTemp ? '가' : '이'} 평소보다 높습니다`,
-      explanation, kb.causes, kb.actions.map((a) => a.text), confidence, ev, kb.verification);
+      explanation, kb.causes, kb.actions.map((a) => a.text), confidence, ev, kb.verification,
+      // 원인·조치·재검사는 지식 DB에서 왔으므로 번역도 거기서 온다(reportI18n.js).
+      // 카탈로그에는 측정값이 들어간 제목·설명·근거만 둔다.
+      // label은 한국어라 그대로 쓰면 영어 제목에 한글이 박힌다. key를 넘겨 영어 쪽에서 이름을 붙인다.
+      { id: isTemp ? 'BASELINE-RISE-TEMP' : 'BASELINE-RISE-MEMORY', params: {
+        key: d.key, unit: d.unit, baselineVal: d.baselineVal, currentVal: d.currentVal,
+        diff: d.diff, sign, ageDays: comparison.ageDays, stale: !!comparison.stale,
+        sampleCount: comparison.sampleCount, watch: d.level === 'watch',
+      } });
     issue.ruleId = kb.id;
     issue.ruleVersion = kb.version;
     issue.actionDetails = kb.actions;
@@ -975,7 +986,13 @@ function evaluateBattery(battery) {
         ...(b.cycleCount !== null ? [`충전 사이클 ${b.cycleCount.toLocaleString()}회 — 정격 사이클은 모델마다 300~1000회로 달라 이 값만으로 판정하지는 않았습니다`] : []),
         ...(b.chargePercent !== null && b.chargePercent < 90 ? [`측정 시 잔량 ${b.chargePercent}% — 완전히 충전한 뒤 다시 재면 값이 달라질 수 있습니다`] : []),
       ],
-      kb.verification);
+      kb.verification,
+      // 제목·원인·조치·재검사는 전부 지식 DB에서 온다. 카탈로그에는 설명과 근거만 둔다.
+      { id: 'BATTERY-DEGRADED', params: {
+        healthPercent: b.healthPercent, severe,
+        designCapacityMWh: b.designCapacityMWh, fullChargeCapacityMWh: b.fullChargeCapacityMWh,
+        cycleCount: b.cycleCount, chargePercent: b.chargePercent,
+      } });
     issue.ruleId = kb.id;
     issue.ruleVersion = kb.version;
     issue.confidenceLevel = 'CONFIRMED';
@@ -1023,7 +1040,8 @@ function evaluateDisplay(displays, visualChecks) {
         ['디스플레이 설정에서 낮은 주사율로 고정됨', '케이블/포트가 고주사율을 지원하지 않음'],
         ['Windows 디스플레이 설정에서 주사율 확인 및 변경', 'DisplayPort/HDMI 케이블 규격 확인'],
         60, [`현재 주사율 ${d.refreshRateHz}Hz`],
-        '설정 변경 후 winver 화면이나 디스플레이 설정에서 적용된 주사율을 다시 확인하세요.'));
+        '설정 변경 후 winver 화면이나 디스플레이 설정에서 적용된 주사율을 다시 확인하세요.',
+        { id: 'DISPLAY-REFRESH-LOW', params: { model: d.model, refreshRateHz: d.refreshRateHz } }));
     }
   });
 
@@ -1036,7 +1054,11 @@ function evaluateDisplay(displays, visualChecks) {
         ['패널 자체의 물리적 결함', '케이블/포트 연결 상태 불량'],
         ['다른 밝기/각도에서 재확인', '가능하면 다른 케이블/포트로 연결해 재확인', '반복 확인되면 제조사 A/S 문의'],
         null, [`사용자 셀프체크: ${c.label} — 이상 발견`],
-        `"디스플레이 테스트" 화면에서 ${c.label}을 다시 실행해 재확인해보세요.`));
+        `"디스플레이 테스트" 화면에서 ${c.label}을 다시 실행해 재확인해보세요.`,
+        // label은 한국어(displayChecks.js의 TESTS). testId를 넘겨 영어 쪽에서 이름을 붙인다.
+        { id: 'DISPLAY-VISUAL-CHECK-ISSUE', params: {
+          testId: c.testId, checkedAt: c.checkedAt, note: c.note,
+        } }));
     }
   });
 
@@ -1151,7 +1173,9 @@ function evaluateEventLogs(eventLog) {
       ['메모리 불량', 'CPU 불안정(오버클럭 등)', 'PCIe 장치(GPU 등) 접촉 불량', '전원 공급 불안정'],
       ['최근 오버클럭/전압 설정을 초기화', 'RAM 재장착 및 슬롯 변경 시도', 'GPU 등 PCIe 카드 재장착'],
       80, [`최근 ${days}일 ${totalByCat.whea}건`, ...(latestOf('whea') ? [`가장 최근: ${latestOf('whea')}`] : []), `이벤트 내역: ${breakdown}`],
-      '설정을 초기화한 뒤 며칠 사용하며 이벤트 로그에 WHEA 오류가 재발하는지 확인하세요.'));
+      '설정을 초기화한 뒤 며칠 사용하며 이벤트 로그에 WHEA 오류가 재발하는지 확인하세요.',
+      // breakdown은 이미 한국어로 조립된 요약이다. 원재료(건수)를 넘겨 영어 쪽에서 다시 만든다.
+      { id: 'EVENT-WHEA', params: { days, count: totalByCat.whea, latest: latestOf('whea'), counts: totalByCat } }));
   }
   if (totalByCat.wheaCorrected > 0) {
     // 정정된(corrected) WHEA 오류는 하드웨어가 스스로 복구한 것이라 흔히 기록된다.
@@ -1161,7 +1185,8 @@ function evaluateEventLogs(eventLog) {
       ['메모리/PCIe 링크에서 간헐적으로 발생하는 정정 가능한 오류', '오버클럭으로 인한 경계선 동작'],
       ['지금 당장 조치할 필요는 없습니다', '건수가 계속 증가하는지 며칠 간격으로 확인', '오버클럭을 했다면 기본값과 비교'],
       35, [`최근 ${days}일 정정된 오류 ${totalByCat.wheaCorrected}건`, '정정 불가 오류는 0건 — 시스템이 복구에 성공했습니다'],
-      '며칠 뒤 다시 진단해 정정된 오류 건수가 눈에 띄게 늘었는지 비교하세요.'));
+      '며칠 뒤 다시 진단해 정정된 오류 건수가 눈에 띄게 늘었는지 비교하세요.',
+      { id: 'EVENT-WHEA-CORRECTED', params: { days, count: totalByCat.wheaCorrected } }));
   }
   if (totalByCat.bugcheck > 0) {
     issues.push(mkIssue('critical', `블루스크린(시스템 충돌) 기록이 ${totalByCat.bugcheck}건 있습니다`,
@@ -1169,7 +1194,8 @@ function evaluateEventLogs(eventLog) {
       ['드라이버 문제', '메모리 불량', '하드웨어 불안정'],
       ['최근 설치/업데이트한 드라이버 확인', 'Windows Update 확인', '반복되면 Windows 메모리 진단 도구 실행'],
       75, [`최근 ${days}일 ${totalByCat.bugcheck}건`, ...(latestOf('bugcheck') ? [`가장 최근: ${latestOf('bugcheck')}`] : []), `이벤트 내역: ${breakdown}`],
-      '조치 후 며칠 사용하며 블루스크린이 재발하는지 확인하세요.'));
+      '조치 후 며칠 사용하며 블루스크린이 재발하는지 확인하세요.',
+      { id: 'EVENT-BUGCHECK', params: { days, count: totalByCat.bugcheck, latest: latestOf('bugcheck'), counts: totalByCat } }));
   }
   if (totalByCat.kernelPower > 0) {
     // 비정상 종료는 원인 후보가 넓다(전원/과열/드라이버/정전). 다른 계통 이벤트가 0건이라는
@@ -1186,7 +1212,11 @@ function evaluateEventLogs(eventLog) {
       ['전원 공급 불안정(PSU/전원 케이블/멀티탭)', '과열로 인한 보호 종료', '순간 정전 등 외부 전원 문제', 'CPU/GPU 오버클럭 불안정', '사용자가 전원 버튼을 길게 눌러 강제 종료한 경우'],
       ['전원 케이블·멀티탭 연결 상태부터 확인(가장 간단하고 흔한 원인)', '오버클럭 설정을 초기화', '안정성 테스트로 부하를 걸어 재현되는지 확인', '종료 시각과 온도 기록이 겹치는지 확인'],
       65, [`최근 ${days}일 ${totalByCat.kernelPower}건`, ...(latestOf('kernelPower') ? [`가장 최근: ${latestOf('kernelPower')}`] : []), `이벤트 내역: ${breakdown}`],
-      '안정성 테스트 탭에서 CPU 부하 테스트를 돌려 재현되는지 확인하세요.'));
+      '안정성 테스트 탭에서 CPU 부하 테스트를 돌려 재현되는지 확인하세요.',
+      // priorityNote("어느 쪽부터 볼지")도 한국어로 조립돼 있다. 동반 이벤트 건수를 넘긴다.
+      { id: 'EVENT-KERNEL-POWER', params: {
+        days, count: totalByCat.kernelPower, latest: latestOf('kernelPower'), counts: totalByCat,
+      } }));
   }
   if (totalByCat.display > 0) {
     issues.push(mkIssue('warning', `그래픽 드라이버 응답 없음/복구 기록이 ${totalByCat.display}건 있습니다`,
@@ -1194,7 +1224,8 @@ function evaluateEventLogs(eventLog) {
       ['그래픽 드라이버 손상/버전 문제', 'GPU 오버클럭 불안정', 'GPU 하드웨어 불안정'],
       ['그래픽 드라이버 완전 재설치(DDU 등 클린 설치 도구 권장)', 'GPU 오버클럭 초기화'],
       70, [`최근 ${days}일 ${totalByCat.display}건`, ...(latestOf('display') ? [`가장 최근: ${latestOf('display')}`] : []), `이벤트 내역: ${breakdown}`],
-      '드라이버 재설치 후 같은 게임/작업을 실행하며 재발 여부를 확인하세요.'));
+      '드라이버 재설치 후 같은 게임/작업을 실행하며 재발 여부를 확인하세요.',
+      { id: 'EVENT-DISPLAY-TDR', params: { days, count: totalByCat.display, latest: latestOf('display'), counts: totalByCat } }));
   }
   if (totalByCat.disk + totalByCat.ntfs > 0) {
     const count = totalByCat.disk + totalByCat.ntfs;
@@ -1203,7 +1234,8 @@ function evaluateEventLogs(eventLog) {
       ['저장장치 노후/불량', 'SATA/NVMe 케이블 연결 불량', '파일시스템 손상'],
       ['저장장치 탭에서 SMART 상태 확인', '케이블/연결 재확인', 'chkdsk 실행 고려'],
       72, [`disk ${totalByCat.disk}건, Ntfs ${totalByCat.ntfs}건`, `이벤트 내역: ${breakdown}`],
-      '저장장치 탭에서 SMART 상태와 처리량 테스트를 다시 확인하세요.'));
+      '저장장치 탭에서 SMART 상태와 처리량 테스트를 다시 확인하세요.',
+      { id: 'EVENT-DISK-NTFS', params: { count, disk: totalByCat.disk, ntfs: totalByCat.ntfs, counts: totalByCat } }));
   }
   if (totalByCat.appError >= 3) {
     issues.push(mkIssue('watch', `특정 프로그램이 반복적으로 비정상 종료된 기록이 있습니다 (${totalByCat.appError}건)`,
@@ -1211,7 +1243,8 @@ function evaluateEventLogs(eventLog) {
       ['프로그램 버전/호환성 문제', '프로그램-드라이버 상호작용 문제'],
       ['해당 프로그램 업데이트 또는 재설치'],
       50, [`최근 ${days}일 ${totalByCat.appError}건`],
-      '프로그램을 업데이트한 뒤 같은 작업을 반복하며 재발 여부를 확인하세요.'));
+      '프로그램을 업데이트한 뒤 같은 작업을 반복하며 재발 여부를 확인하세요.',
+      { id: 'EVENT-APP-ERROR', params: { days, count: totalByCat.appError } }));
   }
 
   const totalCount = eventLog.totalCount !== undefined ? eventLog.totalCount : events.length;
@@ -1267,6 +1300,20 @@ function crossReference(issueA, issueB, noteForA, noteForB) {
   if (!issueA || !issueB) return;
   issueA.evidence.push(noteForA);
   issueB.evidence.push(noteForB);
+
+  // ⚠ 여기서 붙는 근거는 **이슈가 만들어진 뒤에** 추가된다. 그래서 번역기가 카탈로그의
+  //    근거 개수와 대조하면 어긋난다(실제로 영어 리포트에서 WHEA 이슈가 통째로 한국어로
+  //    떨어지는 것을 테스트가 잡았다).
+  //    두 이슈의 메시지 id 쌍이 곧 이 문장의 정체이므로, 그 쌍을 남겨 번역이 찾아가게 한다.
+  //    호출부 16곳을 건드리지 않아도 되고, 새 상관관계를 추가하면 번역이 없다는 사실이
+  //    자동으로 드러난다(그 이슈는 원문으로 남는다).
+  const idA = issueA.msg && issueA.msg.id;
+  const idB = issueB.msg && issueB.msg.id;
+  if (idA && idB) {
+    const pair = `${idA}>${idB}`;
+    (issueA.msgExtra = issueA.msgExtra || []).push({ pair, side: 'a' });
+    (issueB.msgExtra = issueB.msgExtra || []).push({ pair, side: 'b' });
+  }
   [issueA, issueB].forEach((i) => {
     if (i.confidence !== null) {
       i.confidence = Math.min(99, i.confidence + 8);
@@ -1292,10 +1339,12 @@ function applyConfigStabilityCorrelation(sections, configState) {
   ].filter(Boolean);
   if (!errorEvents.length) return;
 
+  // 바뀐 항목은 화면에 한국어로 나가지만, 번역이 다시 이름 붙일 수 있도록 키도 함께 남긴다.
   const changed = [];
-  if (configState.cpu.status === CONFIG_STATUS.MODIFIED) changed.push('CPU 기본 클럭');
-  if (configState.gpu.status === CONFIG_STATUS.MODIFIED) changed.push('GPU 전력 제한');
-  if (configState.memory.status === CONFIG_STATUS.PROFILE_ACTIVE) changed.push('메모리 프로파일');
+  const changedKeys = [];
+  if (configState.cpu.status === CONFIG_STATUS.MODIFIED) { changed.push('CPU 기본 클럭'); changedKeys.push('cpuBaseClock'); }
+  if (configState.gpu.status === CONFIG_STATUS.MODIFIED) { changed.push('GPU 전력 제한'); changedKeys.push('gpuPowerLimit'); }
+  if (configState.memory.status === CONFIG_STATUS.PROFILE_ACTIVE) { changed.push('메모리 프로파일'); changedKeys.push('memoryProfile'); }
   if (!changed.length) return;
 
   // 오류 이벤트 바로 옆에 둔다 — 사용자가 "왜 블루스크린이 났지"를 볼 때 함께 읽어야 하는 내용이다.
@@ -1315,7 +1364,18 @@ function applyConfigStabilityCorrelation(sections, configState) {
     [`변경된 항목: ${changed.join(', ')}`,
      ...errorEvents.flatMap((e) => e.evidence.slice(0, 1)),
      '두 사실이 함께 관측됐다는 것까지가 확인된 내용입니다 — 인과관계는 확인되지 않았습니다'],
-    '설정을 기본값으로 되돌린 뒤 며칠 사용하고 전체 진단을 다시 실행해 오류 이벤트가 늘지 않는지 확인하세요.');
+    '설정을 기본값으로 되돌린 뒤 며칠 사용하고 전체 진단을 다시 실행해 오류 이벤트가 늘지 않는지 확인하세요.',
+    // 제목·원인·조치·재검사는 지식 DB에도 같은 내용이 있다(아래에서 ruleId를 붙인다).
+    // 번역은 그쪽 것을 쓰고, 여기 카탈로그에는 설명과 근거만 둔다.
+    // 이벤트 제목·근거는 이미 한국어로 만들어진 다른 이슈에서 베껴 온 것이다. 그대로 넘기면
+    // 영어 문장에 한국어가 박히므로, **그 이슈의 메시지 id와 값**을 넘겨 다시 만들게 한다.
+    { id: 'CONFIG-STABILITY-CORRELATION', params: {
+      changedKeys,
+      events: errorEvents.map((e) => ({
+        id: (e.msg && e.msg.id) || null,
+        params: (e.msg && e.msg.params) || {},
+      })),
+    } });
   const kb = knowledge('CONFIG-STABILITY-INVESTIGATION');
   issue.ruleId = kb.id;
   issue.ruleVersion = kb.version;
@@ -1328,7 +1388,10 @@ function applyConfigStabilityCorrelation(sections, configState) {
     eventsSection.status = 'warning';
     eventsSection.normalEvidence = [];
   }
-  errorEvents.forEach((e) => e.evidence.push(`설정이 변경된 항목(${changed.join(', ')})이 있어 함께 확인이 필요함`));
+  errorEvents.forEach((e) => {
+    e.evidence.push(`설정이 변경된 항목(${changed.join(', ')})이 있어 함께 확인이 필요함`);
+    (e.msgExtra = e.msgExtra || []).push({ pair: 'CONFIG-CHANGED-NOTE', side: 'a', params: { changedKeys } });
+  });
 }
 
 function applyCorrelations(sections, configState) {

@@ -80,6 +80,12 @@ function analyzeConfiguration({ overclockState, memorySummary } = {}) {
           '설정이 변경됐다는 사실만 확인한 것이며, 불안정하다는 뜻은 아닙니다',
         ],
         verification: kb.verification,
+        // 제목·원인·조치·재검사는 ruleId를 통해 지식 DB의 번역본에서 온다(reportI18n.js).
+        msg: { id: 'OC-CPU-BASE-CLOCK', params: {
+          stockBaseGHz: cpuState.stockBaseGHz, maxClockGHz: cpuState.maxClockGHz, pct,
+          bclkMHz: (cpuState.bclkMHz && cpuState.bclkMHz !== TYPICAL_BCLK_MHZ) ? cpuState.bclkMHz : null,
+          typicalBclkMHz: TYPICAL_BCLK_MHZ,
+        } },
       });
     } else {
       cpu.status = STATUS.STOCK;
@@ -128,6 +134,13 @@ function analyzeConfiguration({ overclockState, memorySummary } = {}) {
           '드라이버가 보고한 값을 그대로 비교한 것이라 확실합니다',
         ],
         verification: kb.verification,
+        // ⚠ 이 이슈는 제목과 조치를 **여기서 손본다**(상향/하향 표기, 되돌릴 실제 값).
+        //    그래서 번역도 지식 DB 것을 그대로 쓰면 안 되고, 카탈로그가 직접 만들어야 한다.
+        //    안 그러면 영어판에서만 "nvidia-smi -pl <기본값>"의 실제 숫자가 사라진다.
+        msg: { id: 'OC-GPU-POWER-LIMIT', params: {
+          powerLimitW: pl, defaultPowerLimitW: dflt, raised,
+          minPowerLimitW: gpuState.minPowerLimitW, maxPowerLimitW: gpuState.maxPowerLimitW,
+        } },
       });
     } else {
       gpu.status = STATUS.STOCK;

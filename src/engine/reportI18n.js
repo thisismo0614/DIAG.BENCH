@@ -10,9 +10,15 @@
 //    번역이 심각도를 바꿀 수 있으면, 영어 화면에서 critical이 watch로 보일 수 있다.
 
 const { SOURCE_LOCALE } = require('../i18n');
+const { knowledge, wizardFor } = require('./issueDb');
 
 const CATALOGS = {
   en: require('../i18n/rules/en'),
+};
+
+// 상관관계가 덧붙이는 근거 줄. 두 이슈의 메시지 id 쌍이 키다(rules.js의 crossReference).
+const CROSS_REF_CATALOGS = {
+  en: require('../i18n/rules/en-crossref'),
 };
 
 // 번역문을 실제 문자열로 만든다. 함수면 측정값(params)을 넣어 부르고, 문자열이면 그대로.
@@ -31,56 +37,110 @@ const filled = (s) => typeof s === 'string' && s.trim().length > 0;
  *
  * 어긋나면 그 이슈만 통째로 원문으로 남긴다 — 절반만 번역된 것보다 낫다.
  */
-function matches(issue, tr, params) {
-  if (!tr) return false;
+const sameLen = (a, b) => Array.isArray(b) && (a || []).length === b.length && b.every(filled);
 
-  const title = resolve(tr.title, params);
+/**
+ * 지식 DB에서 문구를 가져온 이슈(ruleId가 있는 것)의 번역본.
+ *
+ * 이런 이슈는 원인·조치·재검사·Wizard를 issueDb에서 그대로 받아 쓴다(rules.js의
+ * `knowledge(id)` 호출부 참고). 그러니 번역도 **issueDb의 번역본을 그대로 써야 한다.**
+ * 여기에 다시 적어두면 같은 안내에 대한 원본이 둘이 되고, 언젠가 반드시 어긋난다 —
+ * issueDb를 규칙 코드에서 분리한 이유와 정확히 같은 이유다.
+ *
+ * issueDb 쪽 번역이 없으면 null을 돌려준다. 그 이슈는 원문으로 남는다.
+ */
+function knowledgeOverlay(issue, locale) {
+  if (!issue.ruleId) return null;
+  const kb = knowledge(issue.ruleId, locale);
+  if (!kb || !kb.translated) return null;
+  if (!sameLen(issue.causes, kb.causes)) return null;
+  if (!sameLen(issue.actions, (kb.actions || []).map((a) => a.text))) return null;
+  if (issue.verification && !filled(kb.verification)) return null;
+  return kb;
+}
+
+/**
+ * 번역 조각을 모아 "이 이슈를 완전히 옮길 수 있는가"를 판단한다.
+ *
+ * 원문에 있는 항목은 하나도 빠짐없이 번역본이 있어야 한다. 하나라도 없으면 null —
+ * 그 이슈는 통째로 원문으로 남는다. 절반만 번역된 화면이 잘못된 근거를 보여주는 것보다,
+ * 한국어로 보이되 정확한 편이 낫다.
+ */
+function buildTranslation(issue, locale) {
+  const catalog = CATALOGS[locale];
+  const CROSS_REFS = CROSS_REF_CATALOGS[locale] || {};
+  const id = issue.msg && issue.msg.id;
+  const tr = (id && catalog) ? catalog[id] : null;
+  if (!tr) return null;
+  const params = (issue.msg && issue.msg.params) || {};
+
+  const kb = knowledgeOverlay(issue, locale);
+
+  // 제목이 지식 DB에서 그대로 온 이슈(배터리 열화 등)는 카탈로그에 제목을 두지 않는다.
+  // 두면 같은 문장이 두 곳에 생기고, 한쪽만 고치는 날 어긋난다.
+  const title = tr.title !== undefined ? resolve(tr.title, params) : (kb ? kb.title : null);
   const explanation = resolve(tr.explanation, params);
-  if (!filled(title) || !filled(explanation)) return false;
+  if (!filled(title) || !filled(explanation)) return null;
 
-  // 원문에 있는 항목은 번역에도 같은 개수로 있어야 한다.
-  const pairs = [
-    [issue.causes, resolve(tr.causes, params)],
-    [issue.actions, resolve(tr.actions, params)],
-    [issue.evidence, resolve(tr.evidence, params)],
-  ];
-  for (const [orig, next] of pairs) {
-    const o = orig || [];
-    if (!o.length) continue;                       // 원문에 없으면 번역도 없어도 된다
-    if (!Array.isArray(next) || next.length !== o.length) return false;
-    if (!next.every(filled)) return false;
+  const out = { title, explanation };
+
+  // 원인·조치는 카탈로그가 있으면 카탈로그를, 없으면 지식 DB를 쓴다.
+  for (const key of ['causes', 'actions']) {
+    if (!(issue[key] || []).length) continue;
+    let next = tr[key] !== undefined ? resolve(tr[key], params)
+      : (kb ? (key === 'actions' ? kb.actions.map((a) => a.text) : kb.causes) : null);
+    if (!sameLen(issue[key], next)) return null;
+    out[key] = next;
+  }
+
+  // 근거는 측정값이 들어가므로 언제나 카탈로그에서 온다.
+  //
+  // ⚠ 상관관계 단계(applyCorrelations)가 **이슈를 만든 뒤에** 근거를 덧붙인다.
+  //    그 줄은 카탈로그가 알 수 없으므로, 붙은 개수만큼 따로 번역해 뒤에 이어 붙인다.
+  //    하나라도 번역이 없으면 이 이슈는 통째로 원문으로 남는다 — 영어 근거 목록 한가운데
+  //    한국어 한 줄이 끼는 것보다 낫다.
+  if ((issue.evidence || []).length) {
+    const extras = issue.msgExtra || [];
+    const base = issue.evidence.slice(0, issue.evidence.length - extras.length);
+    const next = resolve(tr.evidence, params);
+    if (!sameLen(base, next)) return null;
+
+    const extraLines = [];
+    for (const x of extras) {
+      const entry = CROSS_REFS[x.pair];
+      const line = entry ? resolve(entry[x.side], x.params || params) : null;
+      if (!filled(line)) return null;
+      extraLines.push(line);
+    }
+    out.evidence = [...next, ...extraLines];
   }
 
   // 재검사 방법은 "고쳤는지 확인하는 법"이다. 원문에 있는데 번역에서 빠지면
   // 영어 사용자만 확인 절차를 못 받는다.
-  if (issue.verification && !filled(resolve(tr.verification, params))) return false;
-  return true;
+  if (issue.verification) {
+    const next = tr.verification !== undefined ? resolve(tr.verification, params)
+      : (kb ? kb.verification : null);
+    if (!filled(next)) return null;
+    out.verification = next;
+  }
+
+  if (kb) {
+    if (issue.actionDetails) out.actionDetails = kb.actions;
+    if (issue.wizard) {
+      const w = wizardFor(issue.ruleId, locale);
+      if (!w || !w.translated) return null;
+      out.wizard = w;
+    }
+  }
+  return out;
 }
 
 function localizeIssue(issue, locale) {
-  const catalog = CATALOGS[locale];
-  const id = issue.msg && issue.msg.id;
-  const tr = id && catalog ? catalog[id] : null;
-  const params = (issue.msg && issue.msg.params) || {};
-
-  if (!matches(issue, tr, params)) {
-    return { ...issue, locale: SOURCE_LOCALE, translated: false };
-  }
-
-  const pick = (key) => (tr[key] === undefined ? issue[key] : resolve(tr[key], params));
-  return {
-    ...issue,
-    title: resolve(tr.title, params),
-    explanation: resolve(tr.explanation, params),
-    causes: (issue.causes || []).length ? resolve(tr.causes, params) : issue.causes,
-    actions: (issue.actions || []).length ? resolve(tr.actions, params) : issue.actions,
-    evidence: (issue.evidence || []).length ? resolve(tr.evidence, params) : issue.evidence,
-    verification: issue.verification ? pick('verification') : issue.verification,
-    // ⚠ level·confidence·confidenceLabel·topProcesses·wizard는 손대지 않는다.
-    //    번역이 심각도를 바꿀 수 있으면 안 된다.
-    locale,
-    translated: true,
-  };
+  const tr = buildTranslation(issue, locale);
+  if (!tr) return { ...issue, locale: SOURCE_LOCALE, translated: false };
+  // ⚠ level·confidence·confidenceLabel·topProcesses는 여기 없다.
+  //    번역이 심각도를 바꿀 수 있으면 안 된다.
+  return { ...issue, ...tr, locale, translated: true };
 }
 
 /**

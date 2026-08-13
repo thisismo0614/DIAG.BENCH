@@ -133,6 +133,15 @@ function analyzeMemoryConfig(memModules) {
         '측정된 사실은 "정격보다 낮게 동작 중"이라는 것까지입니다 — 사용 가능한 프로파일 목록은 OS에서 읽을 수 없어 확인하지 못했습니다',
       ],
       verification: kb.verification,
+      // 제목·원인·조치·재검사는 ruleId를 통해 지식 DB의 번역본에서 온다(reportI18n.js).
+      // 여기 params는 측정값이 들어간 설명·근거를 다시 만들기 위한 원재료다.
+      msg: { id: mixed ? 'MEMCFG-MIXED-BELOW-RATED' : 'MEMCFG-BELOW-RATED', params: {
+        type, moduleCount: mods.length, partNumbers, currentSpeed, highestRated, gap,
+        modules: mods.map((m) => ({
+          slot: m.slot, capacityGB: m.capacityGB,
+          name: m.partNumber || m.manufacturer || null, ratedSpeedMTs: m.ratedSpeedMTs || null,
+        })),
+      } },
     });
   }
 
@@ -155,6 +164,7 @@ function analyzeMemoryConfig(memModules) {
         '설정이 변경됐다는 사실만 확인한 것이며, 불안정하다는 뜻은 아닙니다',
       ],
       verification: kb.verification,
+      msg: { id: 'MEMCFG-ABOVE-RATED', params: { type, currentSpeed, highestRated } },
     });
   }
 
@@ -174,6 +184,10 @@ function analyzeMemoryConfig(memModules) {
       confidence: 'STRONG_INDICATION',
       evidence: [`장착 슬롯: ${mods.map((m) => m.slot).join(', ')}`, `확인된 채널: ${distinctChannels.join(', ')}`],
       verification: kb.verification,
+      msg: { id: 'MEMCFG-SINGLE-CHANNEL', params: {
+        moduleCount: mods.length, channel: distinctChannels[0],
+        slots: mods.map((m) => m.slot), channels: distinctChannels,
+      } },
     });
   }
 
