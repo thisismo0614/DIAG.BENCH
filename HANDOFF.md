@@ -37,8 +37,8 @@ Windows PC의 하드웨어/시스템 상태를 진단하는 Electron 데스크�
 **릴리스는 `prerelease`로 발행된다** — `release.yml`이 `startsWith(version, '0.')`일 때
 사전 릴리스로 표시하기 때문이다(의도된 동작). 0.x를 벗어나면 자동으로 정식 릴리스가 된다.
 
-⚠ 그 부작용을 하나 확인해뒀다 (**5장 23번** — 미해결, 사용자 결정 대기):
-사이트가 "아직 공개된 릴리스가 없습니다"라고 표시한다.
+그 부작용으로 사이트가 "아직 공개된 릴리스가 없습니다"라고 표시하던 문제가 있었는데
+`website/build.js`에서 해결했다(**5장 23번**).
 
 작업 전에는 항상 `git log --oneline origin/main..HEAD` 로 push 상태를 먼저 확인할 것.
 
@@ -345,16 +345,16 @@ Sensor Recording, Event Log Analysis, Detailed Result, Diagnosis Engine)은 **�
     가로채지 말고 **버튼을 실제로 클릭하고 DOM과 저장 파일에서 결과를 읽을 것.** 어차피
     사용자가 보는 것도 그 둘이다.
 
-23. **⚠ 미해결: 사이트가 "아직 공개된 릴리스가 없습니다"라고 표시한다 — 실제로는 v0.17.0이 있다.**
-    각각은 의도된 동작인데 맞물려서 생긴 문제다.
-    - `release.yml`은 0.x 버전을 `prerelease: true`로 발행한다(의도된 동작).
-    - `website/build.js`는 `GET /releases/latest`만 조회하는데, **이 API는 prerelease를 제외**한다
-      → HTTP 404 → "릴리스 없음" 대체 동작으로 넘어간다.
-    결과적으로 다운로드 버튼이 `.exe` 직링크를 잃고 릴리스 목록 페이지로 간다(링크가 깨지지는
-    않는다 — GitHub 웹 `/releases/latest`는 목록으로 리다이렉트, HTTP 200 확인).
-    **고칠 때 방향**: `/releases/latest`가 404면 `/releases` 목록에서 draft가 아닌 최신 것을
-    고르고, prerelease면 "사전 릴리스"라고 명시한다. 공개 사이트의 노출 정책이라
-    **사용자 결정이 필요해서 남겨뒀다.**
+23. **`GET /releases/latest`는 사전 릴리스(prerelease)를 제외한다 — 이것 때문에 사이트가
+    "아직 공개된 릴리스가 없습니다"라고 사실과 다른 안내를 하고 있었다.**
+    각각은 의도된 동작인데 맞물려서 생긴 문제였다.
+    - `release.yml`은 0.x 버전을 `prerelease: true`로 발행한다(의도된 동작, 그대로 둔다).
+    - `website/build.js`가 `/releases/latest`만 조회 → HTTP 404 → "릴리스 없음" 대체 동작.
+    결과적으로 v0.17.0이 발행돼 있는데도 다운로드 버튼이 `.exe` 직링크를 잃었다(링크가 깨지지는
+    않았다 — GitHub 웹 `/releases/latest`는 목록으로 리다이렉트, HTTP 200 확인).
+    → **해결**: `/releases/latest`가 404면 `/releases` 목록에서 draft가 아닌 최신 릴리스를
+    다시 찾고, 사전 릴리스면 화면에 **"사전 릴리스"라고 명시**한다(숨기지 않는다).
+    ⚠ `release.yml`은 건드리지 않았다 — SignPath 연동이 걸려 있는 파일이다.
 
 ---
 
@@ -496,11 +496,15 @@ npm run test-rules                        # 기준선: 158/158 통과해야 함
 | 1 | `git push` | ✅ 완료 | `6ed8762`까지 origin/main에 있음 |
 | 2 | `OWNER` placeholder 교체 | ✅ 완료 | `site.config.json` + `package.json` 둘 다 |
 | 3 | GitHub Pages 활성화 | ✅ 완료 | 사이트 라이브(HTTP 200) 확인 |
-| 4 | SignPath Open Source 신청 | **미완료** | 승인까지 시간 걸림. 그동안은 "미서명" 릴리스로 배포됨 |
-| 5 | SignPath 변수·시크릿 등록 | **미완료** | Variables 2개 + Secret 1개 (`docs/RELEASING.md` 3절) |
+| 4 | SignPath Open Source 신청 | **신청함 · 승인 대기** | 2026-08-13 신청. 승인 전까지는 "미서명" 릴리스로 배포됨 |
+| 5 | SignPath 변수·시크릿 등록 | **승인 후 진행** | Variables 2개 + Secret 1개 (`docs/RELEASING.md` 3절) |
 | 6 | 첫 릴리스 태그 | ✅ 완료 | `v0.17.0` 발행됨(prerelease) |
 | 7 | 도메인 연결 | 선택 | `docs/RELEASING.md` 5절 |
-| 8 | 사이트의 prerelease 표시 방침 | **결정 대기** | 5장 23번 — 사이트가 "릴리스 없음"이라고 표시한다 |
+
+> 🔴 **SignPath 연동 파일은 건드리지 말 것** (사용자 요청, 2026-08-13):
+> `.github/workflows/release.yml`의 서명·검증 단계, `SIGNPATH_ORGANIZATION_ID` /
+> `SIGNPATH_PROJECT_SLUG` / `SIGNPATH_SIGNING_POLICY_SLUG` / `SIGNPATH_API_TOKEN` 이름,
+> `docs/RELEASING.md` 3절. 신청이 진행 중이라 이름이나 단계가 바뀌면 연동이 깨진다.
 
 > 참고: 저장소 변수 `SITE_URL`을 설정하면 `site.config.json`보다 우선한다.
 > 파일을 이미 실제 값으로 고쳐뒀으므로 변수는 설정하지 않아도 된다.

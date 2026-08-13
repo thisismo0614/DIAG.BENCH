@@ -27,6 +27,23 @@ const repoUrl = `https://github.com/${owner}/${repo}`;
 const releasesUrl = `${repoUrl}/releases`;
 const latestReleaseUrl = `${releasesUrl}/latest`;
 
+// 릴리스 하나를 사이트가 쓰는 모양으로 정리한다. .exe 자산이 없으면 쓸 수 없다.
+function toRelease(json) {
+  if (!json) return null;
+  // .exe 자산을 찾는다(체크섬 파일 등은 제외).
+  const asset = (json.assets || []).find((a) => a.name.toLowerCase().endsWith('.exe'));
+  if (!asset) return null;
+  return {
+    version: json.tag_name,
+    publishedAt: json.published_at,
+    htmlUrl: json.html_url,
+    assetName: asset.name,
+    downloadUrl: asset.browser_download_url,
+    sizeMB: (asset.size / 1024 / 1024).toFixed(1),
+    prerelease: !!json.prerelease,
+  };
+}
+
 async function fetchLatestRelease() {
   // 인증 토큰이 있으면 쓴다(Actions에서는 GITHUB_TOKEN으로 시간당 1000회).
   const token = process.env.GITHUB_TOKEN;
@@ -35,30 +52,44 @@ async function fetchLatestRelease() {
     'User-Agent': `${repo}-website-build`,
   };
   if (token) headers.Authorization = `Bearer ${token}`;
+  const api = (p) => fetch(`https://api.github.com/repos/${owner}/${repo}${p}`, { headers });
 
   try {
-    const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/releases/latest`, { headers });
-    if (!res.ok) {
-      console.warn(`[build] 최신 릴리스 조회 실패 (HTTP ${res.status}). 릴리스가 아직 없거나 저장소가 비공개일 수 있습니다.`);
+    const res = await api('/releases/latest');
+    if (res.ok) {
+      const rel = toRelease(await res.json());
+      if (rel) return rel;
+      console.warn('[build] 최신 릴리스는 있으나 .exe 자산이 없습니다. 전체 목록에서 다시 찾습니다.');
+    } else if (res.status !== 404) {
+      console.warn(`[build] 최신 릴리스 조회 실패 (HTTP ${res.status}). 저장소가 비공개일 수 있습니다.`);
       return null;
     }
-    const json = await res.json();
-    // .exe 자산을 찾는다(체크섬 파일 등은 제외).
-    const asset = (json.assets || []).find((a) => a.name.toLowerCase().endsWith('.exe'));
-    if (!asset) {
-      console.warn('[build] 릴리스는 있으나 .exe 자산이 없습니다.');
+
+    // ⚠ `/releases/latest`는 **사전 릴리스(prerelease)를 제외한다.** release.yml이 0.x 버전을
+    //    prerelease로 발행하기 때문에, 이 API만 보면 실제로 릴리스가 있는데도 404가 나서
+    //    사이트가 "아직 공개된 릴리스가 없습니다"라고 **사실과 다른 안내**를 하게 된다
+    //    (v0.17.0이 발행된 상태에서 실제로 그랬다).
+    //    그래서 전체 목록에서 draft가 아닌 최신 릴리스를 다시 찾는다. 대신 사전 릴리스면
+    //    그 사실을 숨기지 않고 화면에 명시한다(아래 VERSION_LINE / DOWNLOAD_SUB).
+    const listRes = await api('/releases?per_page=20');
+    if (!listRes.ok) {
+      console.warn(`[build] 릴리스 목록 조회 실패 (HTTP ${listRes.status}).`);
       return null;
     }
-    return {
-      version: json.tag_name,
-      publishedAt: json.published_at,
-      htmlUrl: json.html_url,
-      assetName: asset.name,
-      downloadUrl: asset.browser_download_url,
-      sizeMB: (asset.size / 1024 / 1024).toFixed(1),
-    };
+    const list = await listRes.json();
+    // GitHub는 목록을 생성일 내림차순으로 준다. 첫 번째로 쓸 수 있는 것을 고른다.
+    for (const json of list) {
+      if (json.draft) continue;
+      const rel = toRelease(json);
+      if (rel) {
+        if (rel.prerelease) console.warn(`[build] 정식 릴리스가 없어 사전 릴리스 ${rel.version}을 사용합니다.`);
+        return rel;
+      }
+    }
+    console.warn('[build] 사용할 수 있는 릴리스가 없습니다(.exe 자산을 가진 릴리스 없음).');
+    return null;
   } catch (err) {
-    console.warn(`[build] 최신 릴리스 조회 중 오류: ${err.message}`);
+    console.warn(`[build] 릴리스 조회 중 오류: ${err.message}`);
     return null;
   }
 }
@@ -82,8 +113,10 @@ function esc(s) {
   const downloadUrl = hasRelease ? rel.downloadUrl : latestReleaseUrl;
   const versionLabel = hasRelease ? rel.version : '';
   const downloadLabel = 'Windows용 다운로드';
+  // 사전 릴리스라는 사실을 숨기지 않는다 — 받는 사람이 안정판인지 아닌지 알아야 한다.
+  const preTag = hasRelease && rel.prerelease ? ' · 사전 릴리스' : '';
   const downloadSub = hasRelease
-    ? `${esc(rel.version)} · Windows x64 · ${rel.sizeMB} MB`
+    ? `${esc(rel.version)} · Windows x64 · ${rel.sizeMB} MB${preTag}`
     : 'GitHub 릴리스 페이지에서 최신 버전을 확인하세요';
 
   const vars = {
@@ -103,6 +136,7 @@ function esc(s) {
     VERSION: versionLabel,
     VERSION_LINE: hasRelease
       ? `최신 버전 <strong>${esc(rel.version)}</strong> · ${fmtDate(rel.publishedAt)} 배포`
+        + (rel.prerelease ? ' · <strong>사전 릴리스</strong>(정식판 이전 버전입니다)' : '')
       : '아직 공개된 릴리스가 없습니다',
     RELEASE_NOTES_URL: hasRelease ? rel.htmlUrl : releasesUrl,
     ASSET_NAME: hasRelease ? esc(rel.assetName) : '',
