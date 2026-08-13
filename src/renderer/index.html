@@ -17,50 +17,39 @@
       </div>
     </div>
 
-    <!-- 표시 모드 (기획서 §18) — 보여줄 양만 바꾸고 판정은 바뀌지 않는다 -->
+    <!-- 메뉴는 "사용자가 하려는 일" 기준으로 묶는다.
+         예전에는 그룹이 7개였고 그중 4개가 항목 1개짜리라, 그룹 이름이 항목만큼 많아
+         목록이 길어지고 세로 스크롤까지 생겼다. -->
     <div class="nav-group">
-      <div class="nav-group-label">표시 모드</div>
-      <div style="display:flex;gap:6px;padding:0 4px;">
-        <button class="nav-item mode-btn" data-mode="basic" style="flex:1;text-align:center;">기본</button>
-        <button class="nav-item mode-btn" data-mode="expert" style="flex:1;text-align:center;">전문가</button>
-      </div>
-      <p class="mini-desc" id="mode-hint" style="padding:6px 8px 0;font-size:11px;line-height:1.4;"></p>
-    </div>
-
-    <div class="nav-group">
-      <div class="nav-group-label">종합</div>
+      <div class="nav-group-label">진단</div>
       <button class="nav-item active" data-target="view-dashboard">대시보드</button>
-      <button class="nav-item" data-target="view-history">진단 기록</button>
       <button class="nav-item" data-target="view-profiles">목적별 검사</button>
-      <button class="nav-item" data-target="view-sessions">검사 세션 · 전후 비교</button>
       <button class="nav-item" data-target="view-baseline">평소 상태 기준선</button>
-      <button class="nav-item" data-target="view-inspection">판매용 점검 리포트</button>
     </div>
     <div class="nav-group">
-      <div class="nav-group-label">실시간</div>
+      <div class="nav-group-label">검사 도구</div>
+      <button class="nav-item" data-target="view-stability">부하 테스트</button>
       <button class="nav-item" data-target="view-live">실시간 모니터링</button>
-    </div>
-    <div class="nav-group">
-      <div class="nav-group-label">안정성 테스트</div>
-      <button class="nav-item" data-target="view-stability">CPU · RAM · 저장장치 부하</button>
-    </div>
-    <div class="nav-group">
-      <div class="nav-group-label">디스플레이</div>
-      <button class="nav-item" data-target="view-display">불량화소 · 잔상 · 균일도</button>
-    </div>
-    <div class="nav-group">
-      <div class="nav-group-label">입력장치</div>
+      <button class="nav-item" data-target="view-display">디스플레이 테스트</button>
       <button class="nav-item" data-target="view-mouse">마우스 테스트</button>
       <button class="nav-item" data-target="view-keyboard">키보드 테스트</button>
+      <button class="nav-item" data-target="view-network">네트워크 테스트</button>
     </div>
     <div class="nav-group">
-      <div class="nav-group-label">네트워크</div>
-      <button class="nav-item" data-target="view-network">속도 · 핑 테스트</button>
+      <div class="nav-group-label">기록 · 리포트</div>
+      <button class="nav-item" data-target="view-history">진단 기록</button>
+      <button class="nav-item" data-target="view-sessions">전후 비교</button>
+      <button class="nav-item" data-target="view-inspection">점검 리포트 발급</button>
     </div>
 
-    <!-- 검사 데이터 버전 (기획서 §59) — 어느 버전이 어떤 규칙으로 낸 판정인지 -->
-    <div class="nav-group" style="margin-top:auto;">
-      <p class="mini-desc" id="version-line" style="padding:8px;font-size:10px;line-height:1.5;opacity:.75;"></p>
+    <!-- 표시 모드(기획서 §18)와 버전(§59)은 자주 쓰지 않으므로 아래에 작게 둔다.
+         예전에는 설명문 3줄과 함께 사이드바 맨 위를 차지하고 있었다. -->
+    <div class="sidebar-foot">
+      <div class="mode-switch" role="group" aria-label="표시 모드">
+        <button class="mode-btn" data-mode="basic" title="결과와 해결 방법 위주로 보여줍니다. 판정은 전문가 모드와 완전히 같습니다.">기본</button>
+        <button class="mode-btn" data-mode="expert" title="측정 원시값, 판단 근거, 적용된 규칙 ID와 버전까지 함께 보여줍니다.">전문가</button>
+      </div>
+      <p class="version-line expert-only" id="version-line"></p>
     </div>
   </div>
 
@@ -98,6 +87,10 @@
             <span class="symptom-sub">모든 항목 동일하게 확인</span>
           </button>
         </div>
+
+        <!-- 아직 안 해둔 것이 있으면 여기서 안내한다. 첫 화면의 남는 공간을
+             장식이 아니라 "다음에 할 일"로 채운다. 해당 없으면 아예 나오지 않는다. -->
+        <div id="dashboard-next" class="next-steps" style="display:none;"></div>
       </section>
 
       <section id="progress-view" class="center-view" style="display:none;">

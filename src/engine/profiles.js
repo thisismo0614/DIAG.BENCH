@@ -41,7 +41,8 @@ const PROFILES = {
   quick: profile({
     id: 'quick',
     label: '빠른 점검',
-    purpose: '지금 당장 눈에 띄는 문제가 있는지 30초 안에 확인합니다.',
+    // 소요 시간은 화면이 estimatedSec으로 따로 보여준다. 문구에 또 적으면 두 값이 어긋난다.
+    purpose: '지금 당장 눈에 띄는 문제가 있는지 짧게 확인합니다. 이벤트 로그와 부하 테스트는 건너뜁니다.',
     audience: '개인',
     estimatedSec: 25,
     report: 'diagnosis',

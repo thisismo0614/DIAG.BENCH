@@ -1325,8 +1325,16 @@ function buildReport({ cpu, cpuTrend, memory, memoryModules, overclockState, gpu
   // 검사하지 못한 카테고리가 있으면 그 사실을 숨기지 않는다.
   // "현재 시스템은 정상입니다"는 **전부 검사했을 때만** 할 수 있는 말이다.
   const resultSummary = summarizeResults(sections);
-  const untested = sections.filter((s) => s.result === RESULT.NOT_TESTED).map((s) => s.category);
-  const untestedNote = untested.length ? ` (${untested.join('·')}는 검사하지 못했습니다)` : '';
+  // 사용자에게는 내부 카테고리 코드(EVENTS, DRIVERS…)가 아니라 화면과 같은 이름을 보여준다.
+  // 사이드바에는 "Windows 이벤트"라고 써 있는데 헤드라인에만 "EVENTS"가 뜨면 같은 것을
+  // 가리키는지 알 수 없다.
+  const CATEGORY_NAME = {
+    CPU: 'CPU', GPU: 'GPU', RAM: '메모리', STORAGE: '저장장치',
+    NETWORK: '네트워크', DISPLAY: '디스플레이', DRIVERS: '드라이버', EVENTS: 'Windows 이벤트',
+  };
+  const untested = sections.filter((s) => s.result === RESULT.NOT_TESTED)
+    .map((s) => CATEGORY_NAME[s.category] || s.category);
+  const untestedNote = untested.length ? ` (${untested.join(', ')}는 검사하지 못했습니다)` : '';
 
   let headline;
   if (totalCritical > 0) headline = `${totalCritical}개의 심각한 문제가 발견되었습니다.${untestedNote}`;

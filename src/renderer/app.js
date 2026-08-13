@@ -110,7 +110,8 @@ function renderReport(report) {
       <div class="cat">${catLabelKo[s.category] || s.category}${s.focused ? '<span class="focused-tag">우선확인</span>' : ''}</div>
       <span class="health-badge ${resultBadge(s).cls}">${resultBadge(s).text}</span>
       ${s.result === 'NOT_TESTED' && s.note ? `<div class="normal-evidence">${escHtml(s.note)}</div>` : ''}
-      ${s.result === 'PASS' && s.normalEvidence.length ? `<div class="normal-evidence expert-only">${s.normalEvidence.join(' · ')}</div>` : ''}
+      ${s.result === 'PASS' && s.normalEvidence.length ? `<div class="normal-evidence">${s.normalEvidence.join(' · ')}</div>` : ''}
+      ${s.issues.length ? `<div class="normal-evidence">${s.issues.map((i) => escHtml(i.title)).join(' · ')}</div>` : ''}
     `;
     healthGrid.appendChild(cell);
   });
@@ -135,7 +136,7 @@ function renderReport(report) {
         <div class="detail-title">${issue.title}</div>
         <div class="detail-explain">${issue.explanation}</div>
         <div class="detail-cols">
-          <div class="detail-col expert-only"><div class="detail-col-label">가능한 원인</div><ul>${issue.causes.map((c) => `<li>${c}</li>`).join('')}</ul></div>
+          <div class="detail-col"><div class="detail-col-label">가능한 원인</div><ul>${issue.causes.map((c) => `<li>${c}</li>`).join('')}</ul></div>
           <div class="detail-col"><div class="detail-col-label">권장 조치</div><ul>${renderActions(issue)}</ul></div>
         </div>
         ${renderWizard(issue)}
@@ -353,6 +354,49 @@ document.getElementById('history-clear-btn').addEventListener('click', async () 
 document.querySelector('[data-target="view-history"]').addEventListener('click', loadHistoryView);
 
 /* ============================================================
+   첫 화면의 "다음에 할 일"
+   ------------------------------------------------------------
+   증상 카드 아래 공간을 장식으로 채우지 않는다. 아직 해두지 않아서 진단 정확도가
+   떨어지는 것이 있을 때만, 그것을 하도록 안내한다. 해당 없으면 아무것도 표시하지 않는다.
+============================================================ */
+async function renderNextSteps() {
+  const box = document.getElementById('dashboard-next');
+  if (!box) return;
+  const items = [];
+
+  const baseline = await window.diagAPI.getBaseline();
+  if (!baseline) {
+    items.push({
+      title: '평소 상태 기준선이 아직 없습니다',
+      body: '유휴 상태를 한 번 재두면 다음 진단부터 "평소 44°C → 지금 60°C"처럼 이 PC 기준으로 비교합니다. 먼지 누적이나 쿨러 열화는 이 비교로만 보입니다.',
+      cta: '기준선 측정하기', screen: 'view-baseline',
+    });
+  }
+  const vram = await window.diagAPI.getVramCheck();
+  const gpuStress = await window.diagAPI.getGpuStressCheck();
+  if (!vram || !gpuStress) {
+    items.push({
+      title: 'GPU 정밀 검사 기록이 없습니다',
+      body: 'GPU 부하 테스트와 VRAM 무결성 검사는 진단 중에 자동으로 돌릴 수 없어, 따로 실행한 결과를 기록해두고 반영합니다. 실행 전까지 GPU 항목은 "검사 안 함"으로 남습니다.',
+      cta: '부하 테스트 열기', screen: 'view-stability',
+    });
+  }
+
+  if (!items.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+  box.style.display = 'grid';
+  box.innerHTML = items.map((it) => `
+    <div class="next-card">
+      <div class="next-title">${escHtml(it.title)}</div>
+      <p class="next-body">${escHtml(it.body)}</p>
+      <button class="btn next-go" data-screen="${escHtml(it.screen)}">${escHtml(it.cta)}</button>
+    </div>`).join('');
+  box.querySelectorAll('.next-go').forEach((b) => b.addEventListener('click', () => {
+    document.querySelector(`[data-target="${b.dataset.screen}"]`).click();
+  }));
+}
+renderNextSteps();
+
+/* ============================================================
    표시 모드 (기획서 §18) · 검사 데이터 버전 (§59)
    ------------------------------------------------------------
    ⚠ 모드는 **보여줄 양**만 바꾼다. 판정 결과는 두 모드에서 완전히 같다.
@@ -459,22 +503,22 @@ const esc = escHtml; // 같은 일을 하는 함수를 두 개 두지 않는다
 
 async function loadProfilesView() {
   const list = await window.diagAPI.listProfiles();
-  document.getElementById('profile-list').innerHTML = list.map((p) => `
-    <div class="device-panel" style="margin-bottom:12px;">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;">
-        <div style="flex:1;min-width:260px;">
-          <div class="device-panel-title">${esc(p.label)}</div>
-          <p class="mini-desc" style="margin-top:6px;">${esc(p.purpose)}</p>
-          <p class="mini-desc" style="margin-top:6px;">
-            대상: ${esc(p.audience)} · 예상 ${p.estimatedSec}초
-            · ${p.runsDeepTests ? '부하 테스트 포함' : '부하 테스트 없음'}
-            · ${p.report === 'inspection' ? '점검 리포트 발급' : '진단 결과만'}
-          </p>
-          ${p.warning ? `<div class="note-card" style="margin-top:8px;">${esc(p.warning)}</div>` : ''}
-        </div>
-        <button class="btn" data-profile="${esc(p.id)}">검사 시작</button>
+  const mins = (s) => (s >= 60 ? `약 ${Math.round(s / 60)}분` : `약 ${s}초`);
+  document.getElementById('profile-list').innerHTML = `<div class="profile-grid">${list.map((p) => `
+    <div class="profile-card">
+      <div class="profile-head">
+        <span class="profile-name">${esc(p.label)}</span>
+        <span class="profile-time">${mins(p.estimatedSec)}</span>
       </div>
-    </div>`).join('');
+      <p class="profile-purpose">${esc(p.purpose)}</p>
+      <div class="profile-tags">
+        <span class="ptag">${esc(p.audience)}</span>
+        ${p.runsDeepTests ? '<span class="ptag load">부하 테스트</span>' : ''}
+        ${p.report === 'inspection' ? '<span class="ptag doc">리포트 발급</span>' : ''}
+      </div>
+      ${p.warning ? `<div class="note-card" style="margin:0 0 10px;">${esc(p.warning)}</div>` : ''}
+      <button class="btn" data-profile="${esc(p.id)}">검사 시작</button>
+    </div>`).join('')}</div>`;
 
   document.querySelectorAll('#profile-list [data-profile]').forEach((btn) => {
     btn.addEventListener('click', () => runProfileScan(btn.dataset.profile, list.find((x) => x.id === btn.dataset.profile), btn));
