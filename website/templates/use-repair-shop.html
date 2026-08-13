@@ -1,0 +1,135 @@
+<!--TITLE:수리점 입출고 점검 기록 — 인수인계 분쟁을 줄이는 방법-->
+<!--DESC:수리를 맡길 때와 받을 때 상태를 같은 기준으로 기록하면 "원래 그랬다"는 분쟁이 줄어듭니다. 입고·출고 점검과 전후 비교, 위변조를 확인할 수 있는 리포트 발급을 안내합니다.-->
+
+<nav class="crumbs" aria-label="현재 위치">
+  <a href="index.html">홈</a> <span aria-hidden="true">›</span>
+  <span aria-current="page">수리점 입출고</span>
+</nav>
+
+<section class="page-head">
+  <div class="wrap">
+    <p class="eyebrow">활용</p>
+    <h1>수리점 입출고 점검 기록</h1>
+    <p class="lead">수리 현장에서 가장 소모적인 분쟁은 <strong>"맡길 때부터 그랬는지"</strong>를 두고 벌어집니다.
+      양쪽 다 확신하지만 근거가 없습니다. 입고와 출고를 <strong>같은 기준으로 측정해 남겨두면</strong>
+      이 논쟁 자체가 생기지 않습니다.</p>
+  </div>
+</section>
+
+<section class="article">
+  <div class="wrap article-body">
+
+    <h2 id="문제">기억은 근거가 되지 않습니다</h2>
+    <p>수리를 마치고 돌려줬는데 고객이 "맡기기 전에는 이런 소리가 안 났다"고 합니다.
+      기사는 "원래 그랬다"고 기억합니다. <strong>둘 다 진심이지만 확인할 방법이 없습니다.</strong></p>
+    <p>흔한 쟁점들입니다.</p>
+    <ul class="tick">
+      <li>디스크 상태 — 맡길 때 이미 재할당 섹터가 있었는가</li>
+      <li>배터리 — 원래 이 정도로 줄어 있었는가</li>
+      <li>부품 구성 — 메모리 용량이나 그래픽카드가 바뀌었는가</li>
+      <li>설정 — BIOS의 오버클럭 설정을 누가 건드렸는가</li>
+    </ul>
+    <p>전부 <strong>측정하면 숫자로 남는 것</strong>들입니다. 남겨두지 않았을 뿐입니다.</p>
+
+    <h2 id="흐름">입고 · 출고 두 번의 점검</h2>
+
+    <h3>1. 입고 점검</h3>
+    <p>고객에게 기기를 받는 즉시 실행합니다. DIAG.BENCH에는 이 상황을 위한
+      <strong>입고 점검 프로필</strong>이 있고, 약 2분 30초가 걸립니다.</p>
+    <ol class="steps">
+      <li><strong>고객 정보와 기기 정보를 입력합니다.</strong> 접수 번호, 고객명, 기기 별칭,
+        의뢰받은 증상을 함께 기록합니다.</li>
+      <li><strong>진단을 실행합니다.</strong> 부품 구성, 디스크 상태, 배터리, 설정 변경 여부,
+        최근 오류 기록이 한 번에 남습니다.</li>
+      <li><strong>리포트를 발급해 고객과 나눠 갖습니다.</strong>
+        이 문서가 "받았을 때의 상태"에 대한 양쪽의 공통 근거가 됩니다.</li>
+    </ol>
+
+    <h3>2. 출고 점검</h3>
+    <p>작업을 마친 뒤 <strong>출고 점검 프로필</strong>로 다시 측정합니다.</p>
+    <ol class="steps">
+      <li>같은 항목을 같은 방식으로 다시 측정합니다.</li>
+      <li><strong>입고 기록과 비교합니다.</strong> DIAG.BENCH가 두 세션을 자동으로 대조해
+        무엇이 달라졌는지 표시합니다.</li>
+      <li>수리한 항목이 실제로 개선됐는지, <strong>손대지 않은 항목은 그대로인지</strong> 확인합니다.</li>
+      <li>출고 리포트를 발급합니다.</li>
+    </ol>
+
+    <div class="notice">
+      <p><strong>비교가 핵심입니다.</strong> "고쳤습니다"라는 말보다
+        <strong>"이 값이 이렇게 바뀌었습니다"</strong>가 설득력이 있습니다.
+        반대로 <strong>부품 구성이 입고 때와 동일하다는 것</strong>도 함께 증명됩니다 —
+        부품을 바꿔치기했다는 의심을 사전에 차단합니다.</p>
+    </div>
+
+    <h2 id="비교">전후 비교에서 확인되는 것</h2>
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th>항목</th><th>비교로 알 수 있는 것</th></tr></thead>
+      <tbody>
+        <tr><td><strong>하드웨어 구성</strong></td>
+          <td>메모리·저장장치·그래픽카드가 입고 때와 같은지. 교체했다면 무엇이 바뀌었는지 명시됩니다.</td></tr>
+        <tr><td><strong>디스크 상태</strong></td>
+          <td>재할당 섹터가 늘었는지. 작업 중 악화됐는지 판단할 수 있습니다.</td></tr>
+        <tr><td><strong>온도</strong></td>
+          <td>청소나 서멀 재도포 후 실제로 내려갔는지 숫자로 확인됩니다.</td></tr>
+        <tr><td><strong>설정</strong></td>
+          <td>BIOS 설정을 되돌렸다면 그 사실이, 건드리지 않았다면 그대로임이 기록됩니다.</td></tr>
+        <tr><td><strong>오류 기록</strong></td>
+          <td>수리 후 새 오류가 발생하지 않았는지.</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h2 id="위변조">리포트를 나중에 고쳐 쓸 수 없게</h2>
+    <p>기록이 근거로 쓰이려면 <strong>발급 이후에 고쳐지지 않았다는 것</strong>도 보장돼야 합니다.</p>
+    <p>DIAG.BENCH의 점검 리포트에는 내용 전체에 대한 <strong>검증 해시</strong>가 함께 발급됩니다.</p>
+    <ul class="tick">
+      <li>측정값뿐 아니라 <strong>고객명·접수번호·메모까지 해시 대상에 포함</strong>됩니다.
+        한 글자만 바뀌어도 검증에 실패합니다.</li>
+      <li>리포트를 다시 불러와 검증하면 발급 당시와 동일한지 즉시 확인됩니다.</li>
+      <li>검사 범위 항목에는 <strong>실제로 실행한 검사만</strong> 기록됩니다 —
+        <a href="learn-result-states.html">하지 않은 검사가 했다고 적히지 않습니다.</a></li>
+    </ul>
+
+    <div class="notice notice-warn">
+      <p><strong>법적 효력에 대해.</strong> 이 리포트는 <strong>공인된 감정서가 아닙니다.</strong>
+        측정 결과를 위변조 없이 기록한 문서일 뿐이며, 법적 분쟁에서의 효력은 사안과 기관의 판단에 따릅니다.
+        다만 <strong>양쪽이 같은 숫자를 보고 이야기를 시작할 수 있다는 것</strong>만으로도
+        대부분의 실무 분쟁은 크게 줄어듭니다.</p>
+    </div>
+
+    <h2 id="실무">실무에서 자리잡게 하려면</h2>
+    <ol class="steps">
+      <li><strong>예외를 두지 마세요.</strong> 간단한 작업이라도 입고 점검을 건너뛰면,
+        하필 그 건에서 분쟁이 생깁니다.</li>
+      <li><strong>접수 번호를 반드시 넣으세요.</strong> 나중에 세션을 찾을 때 이것이 기준이 됩니다.</li>
+      <li><strong>고객에게 리포트를 그 자리에서 보여주세요.</strong> 나중에 보내는 것보다
+        받을 때 함께 확인하는 편이 훨씬 효과적입니다.</li>
+      <li><strong>측정하지 못한 항목은 그대로 두세요.</strong> 억지로 채우면 기록의 신뢰가 무너집니다.
+        "확인 불가"도 정직한 기록입니다.</li>
+    </ol>
+
+    <h2 id="관련">더 읽어보기</h2>
+    <ul class="plain-list">
+      <li><a href="use-pre-delivery.html">조립 PC 출고 검사</a></li>
+      <li><a href="learn-result-states.html">"검사하지 않음"은 "정상"이 아닙니다</a></li>
+      <li><a href="learn-smart.html">SMART 값 읽는 법</a></li>
+      <li><a href="user-guide.html">사용 설명서 — 점검 리포트와 전후 비교</a></li>
+    </ul>
+
+  </div>
+</section>
+
+<section class="final-cta">
+  <div class="wrap">
+    <h2>입고·출고 점검을 표준 절차로</h2>
+    <p>전용 프로필과 검증 가능한 리포트로 인수인계 기록을 남길 수 있습니다.</p>
+    <div class="cta">
+      <a class="btn btn-primary" href="{{DOWNLOAD_URL}}">
+        <span class="btn-main">{{DOWNLOAD_LABEL}}</span>
+        <span class="btn-sub">{{DOWNLOAD_SUB}}</span>
+      </a>
+    </div>
+  </div>
+</section>

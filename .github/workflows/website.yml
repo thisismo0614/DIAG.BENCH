@@ -15,6 +15,11 @@ on:
     paths:
       - 'website/**'
       - '.github/workflows/website.yml'
+      # 사이트가 앱의 원본을 직접 읽어 페이지를 만든다. 이 파일들이 바뀌면 사이트 내용도
+      # 달라지므로 함께 트리거해야 한다 — 빠뜨리면 사이트만 옛 내용을 계속 보여준다.
+      - 'src/engine/issueDb.js'   # → 문제 해결 가이드 페이지
+      - 'docs/USER-GUIDE.md'      # → 사용 설명서 페이지
+      - 'docs/TECHNICAL.md'       # → 기술 문서 페이지
   workflow_dispatch:
 
 permissions:
@@ -53,15 +58,38 @@ jobs:
         run: |
           set -e
           cd website/dist
-          for f in index.html download.html faq.html 404.html styles.css favicon.svg robots.txt sitemap.xml; do
+          for f in index.html download.html faq.html 404.html styles.css favicon.svg robots.txt sitemap.xml \
+                   guides.html learn.html user-guide.html technical.html og.png; do
             test -s "$f" || { echo "누락: $f"; exit 1; }
           done
+
+          # 지식 DB에서 생성되는 가이드 페이지가 실제로 만들어졌는지 확인한다.
+          # (issueDb를 못 읽으면 build.js가 조용히 0개를 만들고 끝날 수 있다)
+          guides=$(ls guide-*.html 2>/dev/null | wc -l)
+          test "$guides" -ge 10 || { echo "가이드 페이지가 $guides개뿐입니다 (10개 이상이어야 함)"; exit 1; }
+          echo "가이드 페이지 $guides개"
+
           # 치환되지 않은 템플릿 변수가 남아 있으면 실패시킨다
           if grep -o '{{[A-Z_]*}}' *.html | head -5 | grep -q .; then
             echo "치환되지 않은 템플릿 변수가 있습니다:"
             grep -o '{{[A-Z_]*}}' *.html | sort -u
             exit 1
           fi
+
+          # 구조화 데이터가 유효한 JSON인지 확인한다. 깨진 JSON-LD는 브라우저에서 티가 안 나고
+          # 검색엔진에서만 조용히 무시되므로, 배포 전에 여기서 잡는다.
+          node -e '
+            const fs = require("fs");
+            let n = 0;
+            for (const f of fs.readdirSync(".").filter((x) => x.endsWith(".html"))) {
+              const html = fs.readFileSync(f, "utf-8");
+              for (const m of html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)) {
+                try { JSON.parse(m[1]); n++; }
+                catch (e) { console.error(`${f}: JSON-LD 파싱 실패 — ${e.message}`); process.exit(1); }
+              }
+            }
+            console.log(`구조화 데이터 ${n}개 유효`);
+          '
           echo "검증 통과"
 
       - uses: actions/configure-pages@v5

@@ -1,0 +1,128 @@
+<!--TITLE:VRAM 용량이 프로그램마다 다르게 보이는 이유-->
+<!--DESC:같은 그래픽카드인데 도구마다 VRAM이 다르게 표시됩니다. 전용 메모리·공유 메모리·현재 할당량은 서로 다른 값이며, 무엇을 봐야 하는지 설명합니다.-->
+
+<nav class="crumbs" aria-label="현재 위치">
+  <a href="index.html">홈</a> <span aria-hidden="true">›</span>
+  <a href="learn.html">기술 해설</a> <span aria-hidden="true">›</span>
+  <span aria-current="page">VRAM</span>
+</nav>
+
+<section class="page-head">
+  <div class="wrap">
+    <p class="eyebrow">기술 해설 · 그래픽카드</p>
+    <h1>VRAM 용량이 프로그램마다 다르게 보이는 이유</h1>
+    <p class="lead">같은 그래픽카드를 두고 어떤 도구는 8GB, 어떤 도구는 16GB, 또 어떤 도구는 512MB라고 합니다.
+      <strong>대부분 도구가 틀린 것이 아니라, 서로 다른 값을 보고 있는 것</strong>입니다.
+      무엇이 무엇인지 구분하면 혼란이 사라집니다.</p>
+  </div>
+</section>
+
+<section class="article">
+  <div class="wrap article-body">
+
+    <h2 id="세가지">VRAM이라 불리는 세 가지 값</h2>
+
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th>값</th><th>무엇인가</th><th>어디서 보이나</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>전용 비디오 메모리</strong><br><span class="hint">Dedicated Video Memory</span></td>
+          <td>그래픽카드에 <strong>물리적으로 붙어 있는</strong> 메모리.
+              "RTX 4060 8GB"의 그 8GB입니다.</td>
+          <td>작업 관리자 "전용 GPU 메모리", <code>nvidia-smi</code></td>
+        </tr>
+        <tr>
+          <td><strong>공유 시스템 메모리</strong><br><span class="hint">Shared System Memory</span></td>
+          <td>전용 메모리가 모자랄 때 <strong>빌려 쓸 수 있는 시스템 RAM</strong>.
+              보통 시스템 RAM의 절반이 상한입니다.</td>
+          <td>작업 관리자 "공유 GPU 메모리"</td>
+        </tr>
+        <tr>
+          <td><strong>현재 할당량</strong><br><span class="hint">Current / Adapter RAM</span></td>
+          <td><strong>지금 이 순간</strong> 잡혀 있는 양. 계속 변합니다.</td>
+          <td>일부 WMI 조회, 모니터링 도구</td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+
+    <p>"8GB인데 16GB로 보인다" → 전용 + 공유를 더한 값입니다.<br>
+      "8GB인데 512MB로 보인다" → 지금 실제로 쓰이고 있는 양입니다.</p>
+
+    <h2 id="wmi">Windows가 4GB를 넘겨 보고하지 못하는 문제</h2>
+    <p>가장 자주 혼란을 일으키는 원인입니다. 오래된 WMI 속성인
+      <code>Win32_VideoController.AdapterRAM</code>은 <strong>32비트 값</strong>이라
+      4,294,967,295바이트(약 4GB)까지밖에 표현하지 못합니다.</p>
+    <pre><code>Get-CimInstance Win32_VideoController |
+  Select-Object Name, AdapterRAM
+
+Name           : NVIDIA GeForce RTX 4060 Ti 16GB
+AdapterRAM     : 4293918720        ← 실제 16GB인데 약 4GB로 보고</code></pre>
+    <p>16GB 카드도, 8GB 카드도 전부 "약 4GB"로 나옵니다.
+      <strong>이 값을 그대로 표시하는 도구는 큰 용량의 그래픽카드에서 반드시 틀립니다.</strong>
+      Microsoft도 이 속성을 더 이상 신뢰할 수 없다고 안내하고 있습니다.</p>
+
+    <div class="notice">
+      <p>그래서 DIAG.BENCH는 NVIDIA 카드에서 <code>nvidia-smi</code>를 우선해서 씁니다.
+        드라이버가 직접 보고하는 값이라 이 제약이 없습니다.
+        <strong>다만 AMD·Intel 그래픽에는 대응하는 도구가 없어 현재 지원 범위가 아닙니다</strong> —
+        그 경우 값을 추측하지 않고 <a href="learn-result-states.html">"확인 불가"로 표시</a>합니다.</p>
+    </div>
+
+    <h2 id="내장">내장 그래픽은 아예 다릅니다</h2>
+    <p>내장 그래픽(Intel UHD/Iris, AMD Radeon Graphics)에는 전용 메모리가 거의 없거나 아주 적습니다.
+      <strong>시스템 RAM을 나눠 쓰기 때문</strong>입니다.</p>
+    <ul class="tick">
+      <li>BIOS에서 미리 떼어주는 양이 있고(보통 64MB~2GB), 나머지는 <strong>필요할 때 동적으로</strong> 가져갑니다.</li>
+      <li>그래서 값이 계속 변하고, 도구마다 다른 시점의 값을 보여줍니다.</li>
+      <li><strong>메모리 대역폭이 곧 그래픽 성능</strong>이라
+        <a href="learn-dual-channel.html">듀얼 채널 여부</a>와
+        <a href="learn-memory-profile.html">메모리 속도</a>가 체감 성능에 크게 영향을 줍니다.</li>
+    </ul>
+    <p>내장 그래픽 시스템에서 게임 성능이 기대에 못 미친다면, 그래픽 설정보다
+      <strong>메모리가 싱글 채널인지부터</strong> 확인하는 편이 빠릅니다.</p>
+
+    <h2 id="봐야할것">그래서 무엇을 봐야 하나</h2>
+    <ol class="steps">
+      <li><strong>"이 카드가 몇 GB짜리인가"</strong>를 알고 싶다 → <strong>전용 비디오 메모리</strong>를 보세요.
+        제품명에 적힌 값과 같아야 합니다.</li>
+      <li><strong>"지금 게임이 VRAM이 모자란가"</strong>를 알고 싶다 → 전용 메모리 사용량이 상한에 붙어 있고
+        <strong>공유 메모리 사용이 늘고 있다면</strong> 부족한 상태입니다.
+        시스템 RAM으로 넘어가면 눈에 띄게 느려집니다.</li>
+      <li><strong>공유 메모리 용량 자체는 신경 쓰지 않아도 됩니다.</strong>
+        "쓸 수 있는 상한"일 뿐 실제로 그만큼 쓰이지 않습니다.</li>
+    </ol>
+
+    <h2 id="확인">직접 확인하는 방법</h2>
+    <pre><code># NVIDIA — 가장 정확
+nvidia-smi --query-gpu=name,memory.total,memory.used --format=csv
+
+# 전체 — DirectX 진단 도구
+dxdiag</code></pre>
+    <p>작업 관리자 → 성능 → GPU에서도 전용/공유가 나뉘어 표시됩니다.
+      <strong>두 값이 따로 보인다는 점</strong>만 알고 있으면 대부분의 혼란은 사라집니다.</p>
+
+    <h2 id="관련">더 읽어보기</h2>
+    <ul class="plain-list">
+      <li><a href="guide-gpu-power-limit-changed.html">그래픽카드 전력 제한이 기본값과 다를 때</a></li>
+      <li><a href="learn-dual-channel.html">듀얼 채널 확인하는 법</a></li>
+      <li><a href="learn-result-states.html">"검사하지 않음"은 "정상"이 아닙니다</a></li>
+    </ul>
+
+  </div>
+</section>
+
+<section class="final-cta">
+  <div class="wrap">
+    <h2>내 그래픽카드 정보를 확인해 보세요</h2>
+    <p>DIAG.BENCH는 신뢰할 수 없는 WMI 값 대신 드라이버가 보고하는 값을 우선하고,
+      얻을 수 없으면 추측하지 않고 그렇게 표시합니다.</p>
+    <div class="cta">
+      <a class="btn btn-primary" href="{{DOWNLOAD_URL}}">
+        <span class="btn-main">{{DOWNLOAD_LABEL}}</span>
+        <span class="btn-sub">{{DOWNLOAD_SUB}}</span>
+      </a>
+    </div>
+  </div>
+</section>

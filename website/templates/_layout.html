@@ -7,15 +7,20 @@
 <meta name="description" content="{{PAGE_DESC}}">
 <link rel="canonical" href="{{CANONICAL}}">
 
-<meta property="og:type" content="website">
+<meta property="og:type" content="{{OG_TYPE}}">
 <meta property="og:site_name" content="{{PRODUCT_NAME}}">
 <meta property="og:title" content="{{PAGE_TITLE}}">
 <meta property="og:description" content="{{PAGE_DESC}}">
 <meta property="og:url" content="{{CANONICAL}}">
 <meta property="og:locale" content="ko_KR">
-<meta name="twitter:card" content="summary">
+<meta property="og:image" content="{{SITE_URL}}/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="{{PRODUCT_NAME}} — {{TAGLINE}}">
+<meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="{{PAGE_TITLE}}">
 <meta name="twitter:description" content="{{PAGE_DESC}}">
+<meta name="twitter:image" content="{{SITE_URL}}/og.png">
 
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="styles.css">
@@ -30,10 +35,14 @@
   "description": "{{DESCRIPTION}}",
   "url": "{{SITE_URL}}",
   "downloadUrl": "{{DOWNLOAD_URL}}",
+  "softwareVersion": "{{VERSION}}",
+  "inLanguage": "ko",
   "license": "https://opensource.org/licenses/MIT",
+  "isAccessibleForFree": true,
   "offers": { "@type": "Offer", "price": "0", "priceCurrency": "KRW" }
 }
 </script>
+{{PAGE_JSONLD}}
 {{ANALYTICS}}
 </head>
 <body>
@@ -47,7 +56,9 @@
       <span class="brand-name">{{PRODUCT_NAME}}</span>
     </a>
     <ul class="nav-links">
-      <li><a href="index.html#features">기능</a></li>
+      <li><a href="guides.html">문제 해결</a></li>
+      <li><a href="learn.html">기술 해설</a></li>
+      <li><a href="user-guide.html">사용법</a></li>
       <li><a href="download.html">다운로드</a></li>
       <li><a href="faq.html">FAQ</a></li>
       <li><a href="{{REPO_URL}}" rel="noopener">GitHub</a></li>
@@ -72,6 +83,23 @@
           <li><a href="download.html">다운로드</a></li>
           <li><a href="index.html#features">기능</a></li>
           <li><a href="faq.html">FAQ</a></li>
+        </ul>
+      </div>
+      <div>
+        <h2>알아보기</h2>
+        <ul>
+          <li><a href="guides.html">문제 해결 가이드</a></li>
+          <li><a href="learn.html">기술 해설</a></li>
+          <li><a href="user-guide.html">사용 설명서</a></li>
+          <li><a href="technical.html">기술 문서</a></li>
+        </ul>
+      </div>
+      <div>
+        <h2>활용</h2>
+        <ul>
+          <li><a href="use-used-pc.html">중고 PC 점검</a></li>
+          <li><a href="use-repair-shop.html">수리점 입출고</a></li>
+          <li><a href="use-pre-delivery.html">조립 PC 출고 검사</a></li>
         </ul>
       </div>
       <div>

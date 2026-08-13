@@ -1,0 +1,125 @@
+<!--TITLE:XMP·EXPO란 무엇인가 — 산 대로 안 나오는 메모리 속도-->
+<!--DESC:3200MHz 메모리가 2666으로 잡히는 것은 고장이 아닙니다. 메모리가 기본적으로 JEDEC 표준 속도로 동작하는 이유와 XMP/EXPO를 켜기 전에 알아둘 것을 설명합니다.-->
+
+<nav class="crumbs" aria-label="현재 위치">
+  <a href="index.html">홈</a> <span aria-hidden="true">›</span>
+  <a href="learn.html">기술 해설</a> <span aria-hidden="true">›</span>
+  <span aria-current="page">XMP · EXPO</span>
+</nav>
+
+<section class="page-head">
+  <div class="wrap">
+    <p class="eyebrow">기술 해설 · 메모리</p>
+    <h1>XMP·EXPO란 무엇인가</h1>
+    <p class="lead">3200MHz라고 적힌 메모리를 샀는데 2666으로 표시됩니다. 불량을 받은 걸까요?
+      거의 확실히 아닙니다. 메모리는 <strong>기본적으로 표준 속도로 동작하도록 설계</strong>되어 있고,
+      상자에 적힌 속도는 따로 켜야 나옵니다.</p>
+  </div>
+</section>
+
+<section class="article">
+  <div class="wrap article-body">
+
+    <h2 id="왜">왜 처음부터 제 속도로 안 도는가</h2>
+    <p>메모리 모듈 안에는 <strong>SPD</strong>라는 작은 칩이 있어서 "나는 이런 속도로 동작할 수 있다"는
+      정보를 담고 있습니다. 여기에는 두 종류의 설정이 들어 있습니다.</p>
+
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th>구분</th><th>내용</th><th>언제 쓰이나</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>JEDEC 표준</strong></td>
+          <td>업계 표준으로 정한 보수적인 속도<br>(DDR4는 보통 2133~2666)</td>
+          <td><strong>기본값.</strong> 아무 설정도 안 하면 이걸로 동작합니다</td>
+        </tr>
+        <tr>
+          <td><strong>XMP / EXPO</strong></td>
+          <td>제조사가 "이 속도까지 검증했다"고 넣어둔 프로파일<br>(상자에 적힌 속도)</td>
+          <td>BIOS에서 <strong>사용자가 켜야</strong> 적용됩니다</td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+
+    <p>기본값이 낮은 이유는 <strong>호환성</strong>입니다. 어떤 메인보드에, 어떤 CPU와, 몇 개를 꽂을지
+      제조사는 알 수 없습니다. 그래서 <strong>어떤 조합에서도 부팅은 되는 속도</strong>를 기본으로 두고,
+      더 빠른 설정은 사용자가 선택하도록 남겨둡니다.</p>
+
+    <div class="notice">
+      <p><strong>XMP</strong>는 Intel이, <strong>EXPO</strong>는 AMD가 만든 이름입니다.
+        하는 일은 같습니다 — 검증된 속도·타이밍·전압 묶음을 한 번에 적용합니다.
+        메인보드 제조사에 따라 "D.O.C.P", "A-XMP" 같은 다른 이름으로 부르기도 합니다.</p>
+    </div>
+
+    <h2 id="차이">속도를 올리면 실제로 얼마나 빨라지나</h2>
+    <p>솔직하게 말하면 <strong>용도에 따라 차이가 큽니다.</strong> 과장된 기대는 하지 않는 편이 좋습니다.</p>
+    <ul class="tick">
+      <li><strong>내장 그래픽 사용</strong> — 체감 차이가 가장 큽니다. 내장 그래픽은 시스템 메모리를
+        그래픽 메모리로 쓰기 때문에 대역폭이 곧 성능입니다.</li>
+      <li><strong>Ryzen CPU</strong> — 메모리 속도가 내부 통신 속도와 연결되어 있어 영향이 상대적으로 큽니다.</li>
+      <li><strong>일반적인 문서 작업·웹 브라우징</strong> — 체감하기 어렵습니다.</li>
+      <li><strong>게임</strong> — 그래픽카드가 병목인 경우가 많아 차이가 작을 수 있습니다.</li>
+    </ul>
+
+    <h2 id="켜기">켜기 전에 알아둘 것</h2>
+
+    <div class="notice notice-warn">
+      <p><strong>BIOS 설정 변경은 되돌리기 어려운 축에 듭니다.</strong> 잘못 설정하면 부팅이 되지 않을 수 있고,
+        그때는 화면이 안 나오니 되돌릴 방법을 미리 알아둬야 합니다.
+        <strong>메인보드의 CMOS 클리어</strong>(점퍼나 버튼, 혹은 수은전지 분리)가 그 방법입니다.
+        내 메인보드에서 어떻게 하는지 <strong>먼저 확인해 두세요.</strong></p>
+    </div>
+
+    <ol class="steps">
+      <li><strong>현재 설정을 기록합니다.</strong> BIOS 화면을 사진으로 찍어두면 충분합니다.</li>
+      <li><strong>바꾸기 전 상태에서 안정성을 확인합니다.</strong> 지금도 불안정한데 설정을 바꾸면
+        무엇이 원인인지 알 수 없게 됩니다. 기준점을 먼저 만드세요.</li>
+      <li><strong>프로파일을 켭니다.</strong> BIOS에서 XMP/EXPO를 Profile 1로 설정합니다.</li>
+      <li><strong>부팅되면 실제로 적용됐는지 확인합니다.</strong> 켰다고 항상 적용되는 것은 아닙니다.</li>
+      <li><strong>메모리 검사를 돌립니다.</strong> 부팅이 된다고 안정적인 것이 아닙니다.
+        오류가 나오면 프로파일을 끄거나 한 단계 낮은 설정을 씁니다.</li>
+    </ol>
+
+    <h2 id="안될때">켰는데도 속도가 안 오르는 경우</h2>
+    <ul class="tick">
+      <li><strong>메인보드나 CPU의 상한에 걸림</strong> — 메모리가 3600을 지원해도
+        보드가 3200까지만 지원하면 3200이 최대입니다.</li>
+      <li><strong>슬롯을 모두 채워서</strong> — 4개 슬롯을 다 채우면 지원 속도 상한이 내려가는 보드가 많습니다.
+        메모리 컨트롤러 부담이 커지기 때문입니다.</li>
+      <li><strong>서로 다른 모듈이 섞여 있어서</strong> — 이 경우
+        <a href="guide-ram-mixed-modules-slow.html">가장 낮은 공통 설정</a>으로 동작합니다.</li>
+    </ul>
+
+    <h2 id="한계">타이밍은 OS에서 읽을 수 없습니다</h2>
+    <p>알아둘 만한 한계가 하나 있습니다. 메모리 성능은 속도(MHz)뿐 아니라
+      <strong>타이밍</strong>(CL16-18-18-38 같은 값)에도 좌우되는데,
+      <strong>Windows에서 실행되는 프로그램은 현재 적용된 타이밍을 읽을 수 없습니다.</strong></p>
+    <p>타이밍을 알려면 SPD 칩에 직접 접근해야 하고, 이는 커널 수준 권한이 필요합니다.
+      DIAG.BENCH가 커널 드라이버를 설치하지 않기로 한 이상 이 값은 얻을 수 없습니다.
+      <strong>그래서 "타이밍은 확인할 수 없다"고 명시합니다</strong> —
+      <a href="learn-result-states.html">모르는 것을 아는 척하지 않기 위해서</a>입니다.
+      정확한 타이밍이 필요하면 BIOS 화면에서 직접 확인하세요.</p>
+
+    <h2 id="관련">더 읽어보기</h2>
+    <ul class="plain-list">
+      <li><a href="guide-ram-below-rated-speed.html">램이 정격 속도로 동작하지 않을 때</a></li>
+      <li><a href="guide-ram-mixed-modules-slow.html">램을 섞어 꽂으면 속도가 낮아지는 이유</a></li>
+      <li><a href="learn-dual-channel.html">듀얼 채널 확인하는 법</a></li>
+    </ul>
+
+  </div>
+</section>
+
+<section class="final-cta">
+  <div class="wrap">
+    <h2>내 메모리가 정격대로 돌고 있는지 확인해 보세요</h2>
+    <p>DIAG.BENCH는 모듈별 정격과 현재 동작 속도를 비교해, 차이가 나면 그 이유까지 함께 알려줍니다.</p>
+    <div class="cta">
+      <a class="btn btn-primary" href="{{DOWNLOAD_URL}}">
+        <span class="btn-main">{{DOWNLOAD_LABEL}}</span>
+        <span class="btn-sub">{{DOWNLOAD_SUB}}</span>
+      </a>
+    </div>
+  </div>
+</section>

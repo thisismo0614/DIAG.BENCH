@@ -1,0 +1,144 @@
+<!--TITLE:노트북 배터리 실제 용량 확인하는 법 (설계 용량 · 완충 용량 · 사이클)-->
+<!--DESC:Windows의 배터리 정보는 대부분 비어 있습니다. 설계 용량을 실제로 얻을 수 있는 경로와, 완충 용량·사이클 수를 함께 봐야 판단이 되는 이유를 실측 데이터로 설명합니다.-->
+
+<nav class="crumbs" aria-label="현재 위치">
+  <a href="index.html">홈</a> <span aria-hidden="true">›</span>
+  <a href="learn.html">기술 해설</a> <span aria-hidden="true">›</span>
+  <span aria-current="page">배터리</span>
+</nav>
+
+<section class="page-head">
+  <div class="wrap">
+    <p class="eyebrow">기술 해설 · 배터리</p>
+    <h1>노트북 배터리 실제 용량 확인하는 법</h1>
+    <p class="lead">배터리 수명을 판단하려면 두 숫자가 필요합니다 —
+      <strong>공장에서 나올 때의 용량(설계 용량)</strong>과 <strong>지금 꽉 채웠을 때의 용량(완충 용량)</strong>.
+      문제는 Windows가 이 값을 순순히 알려주지 않는다는 점입니다.</p>
+  </div>
+</section>
+
+<section class="article">
+  <div class="wrap article-body">
+
+    <h2 id="공식">수명을 계산하는 식은 간단합니다</h2>
+    <div class="detect">배터리 건강도 = 완충 용량 ÷ 설계 용량 × 100</div>
+    <p>예를 들어 설계 용량이 80,000 mWh인데 지금 완충하면 65,410 mWh까지만 찬다면 81.8%입니다.
+      일반적으로 <strong>80% 아래로 내려가면 체감 사용 시간이 뚜렷하게 줄어든다</strong>고 봅니다.</p>
+    <p>식은 쉬운데, 두 숫자를 구하는 것이 어렵습니다.</p>
+
+    <h2 id="실측">Windows가 알려주는 값은 대부분 비어 있습니다</h2>
+    <p>실제 노트북에서 흔히 쓰이는 조회 방법을 차례로 시도한 결과입니다.</p>
+
+    <h3>1. Win32_Battery — 가장 많이 안내되는 방법</h3>
+    <pre><code>Get-CimInstance -ClassName Win32_Battery |
+  Select-Object Name, DesignCapacity, FullChargeCapacity, EstimatedChargeRemaining
+
+Name               : LGES-LG
+DesignCapacity     :
+FullChargeCapacity :
+EstimatedChargeRemaining : 10</code></pre>
+    <p><strong>필요한 두 값이 정확히 비어 있습니다.</strong> 검색하면 가장 많이 나오는 방법인데,
+      실제로는 대부분의 노트북에서 이 필드가 채워지지 않습니다. 값이 없는 것이지 0이 아니므로,
+      이걸 그대로 계산에 넣으면 엉뚱한 결과가 나옵니다.</p>
+
+    <h3>2. root\wmi의 배터리 클래스</h3>
+    <pre><code>Get-CimInstance -Namespace root\wmi -ClassName BatteryStaticData
+# → 인스턴스 없음
+
+Get-CimInstance -Namespace root\wmi -ClassName BatteryFullChargedCapacity
+FullChargedCapacity : 65410        ← 완충 용량은 얻었다
+
+Get-CimInstance -Namespace root\wmi -ClassName BatteryCycleCount
+CycleCount : 173                   ← 사이클 수도 얻었다</code></pre>
+    <p>완충 용량과 사이클 수는 나왔습니다. 그런데 <strong>설계 용량을 담고 있어야 할
+      <code>BatteryStaticData</code>에는 인스턴스가 아예 없습니다.</strong>
+      분자는 있는데 분모가 없는 상태입니다.</p>
+
+    <h3>3. powercfg 배터리 보고서 — 실제로 되는 방법</h3>
+    <pre><code>powercfg /batteryreport /output "%USERPROFILE%\battery.html"</code></pre>
+    <p>생성된 보고서에 두 값이 모두 있습니다.</p>
+    <pre><code>DESIGN CAPACITY        80,000 mWh
+FULL CHARGE CAPACITY   65,410 mWh
+CYCLE COUNT            173</code></pre>
+
+    <div class="notice">
+      <p><strong>결론: 설계 용량을 얻을 수 있는 실질적인 경로는 <code>powercfg /batteryreport</code> 하나였습니다.</strong>
+        WMI로 얻은 완충 용량 65,410과 보고서의 값이 정확히 일치하는 것도 확인했습니다 —
+        두 경로가 같은 값을 보고 있다는 교차 검증이 됩니다.</p>
+    </div>
+
+    <p>이 사례에서 건강도는 65,410 ÷ 80,000 = <strong>81.8%</strong>입니다.
+      80% 기준을 아직 넘지 않았으므로 "교체가 필요한 상태"는 아닙니다.
+      다만 경계에 가까워지고 있으므로 추이를 볼 가치는 있습니다.</p>
+
+    <h2 id="사이클">사이클 수를 함께 봐야 판단이 됩니다</h2>
+    <p>용량만 보면 "많이 줄었다"까지는 알 수 있지만 <strong>그게 정상인지</strong>는 알 수 없습니다.
+      사이클 수와 같이 놓아야 의미가 생깁니다.</p>
+
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th>상황</th><th>어떻게 읽어야 하는가</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>사이클 많음 + 용량 많이 줄어듦</td>
+          <td>자연스러운 열화입니다. 많이 썼으니 줄어든 것입니다.</td>
+        </tr>
+        <tr>
+          <td><strong>사이클 적음 + 용량 많이 줄어듦</strong></td>
+          <td><strong>사용량이 원인이 아닙니다.</strong> 고온 환경 보관이나 항상 100% 충전 상태로
+              전원을 꽂아둔 사용 습관을 의심할 수 있습니다.</td>
+        </tr>
+        <tr>
+          <td>사이클 많음 + 용량 거의 유지</td>
+          <td>관리가 잘 된 경우입니다. 그대로 쓰면 됩니다.</td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+
+    <p>앞의 사례는 사이클 173회에 81.8%입니다. 사이클 수 대비 무난한 편으로,
+      특별한 원인을 찾기보다는 자연스러운 경과로 보는 것이 맞습니다.</p>
+
+    <h2 id="주의">측정할 때 주의할 것</h2>
+    <ul class="tick">
+      <li><strong>완전히 충전한 뒤 측정하세요.</strong> 충전이 덜 된 상태에서는 완충 용량이 낮게
+        보고되는 경우가 있어 실제보다 나쁘게 나옵니다.</li>
+      <li><strong>한 번의 값으로 판단하지 마세요.</strong> 배터리 컨트롤러의 학습 상태에 따라 값이 흔들립니다.
+        몇 주 간격으로 다시 재서 추세를 보는 편이 정확합니다.</li>
+      <li><strong>제조사 유틸리티와 대조해 보세요.</strong> 두 도구가 같은 결론이면 신뢰도가 올라가고,
+        다르면 어느 쪽이 무엇을 읽고 있는지 확인할 단서가 됩니다.</li>
+      <li><strong>데스크톱에는 해당하지 않습니다.</strong> 배터리가 없는 시스템에서 이 항목은
+        "정상"이 아니라 <a href="learn-result-states.html">애초에 검사 대상이 아님</a>으로 다뤄야 합니다.</li>
+    </ul>
+
+    <h2 id="줄이기">열화를 늦추는 방법</h2>
+    <p>이미 줄어든 용량은 되돌릴 수 없습니다. 다만 속도는 늦출 수 있습니다.</p>
+    <ol class="steps">
+      <li>전원을 꽂고 쓰는 시간이 많다면 제조사 유틸리티의 <strong>충전 상한 기능(보통 80%)</strong>을 켭니다.
+        상시 100% 유지가 열화를 가장 빠르게 만듭니다.</li>
+      <li>고온을 피합니다. 이불 위에서 사용하거나 여름철 차 안에 두는 것이 특히 나쁩니다.</li>
+      <li>완전 방전을 반복하지 않습니다. 20~80% 구간에서 쓰는 것이 가장 부담이 적습니다.</li>
+    </ol>
+
+    <h2 id="관련">더 읽어보기</h2>
+    <ul class="plain-list">
+      <li><a href="guide-laptop-battery-degraded.html">노트북 배터리 수명이 줄었을 때 — 단계별 확인</a></li>
+      <li><a href="learn-result-states.html">"검사하지 않음"은 "정상"이 아닙니다</a></li>
+    </ul>
+
+  </div>
+</section>
+
+<section class="final-cta">
+  <div class="wrap">
+    <h2>배터리 상태를 자동으로 확인해 보세요</h2>
+    <p>DIAG.BENCH는 위 경로를 순서대로 시도해 설계 용량·완충 용량·사이클 수를 모으고,
+      값을 얻지 못하면 그 사실을 숨기지 않고 표시합니다.</p>
+    <div class="cta">
+      <a class="btn btn-primary" href="{{DOWNLOAD_URL}}">
+        <span class="btn-main">{{DOWNLOAD_LABEL}}</span>
+        <span class="btn-sub">{{DOWNLOAD_SUB}}</span>
+      </a>
+    </div>
+  </div>
+</section>

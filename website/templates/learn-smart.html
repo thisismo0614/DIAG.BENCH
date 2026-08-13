@@ -1,0 +1,151 @@
+<!--TITLE:SMART 값 읽는 법 — 어떤 항목이 실제로 위험 신호인가-->
+<!--DESC:SMART 항목은 수십 개지만 교체를 결정할 근거가 되는 것은 몇 개뿐입니다. 재할당 섹터, 대기 중 섹터, NVMe 수명 표시를 어떻게 읽어야 하는지와 SMART의 한계를 설명합니다.-->
+
+<nav class="crumbs" aria-label="현재 위치">
+  <a href="index.html">홈</a> <span aria-hidden="true">›</span>
+  <a href="learn.html">기술 해설</a> <span aria-hidden="true">›</span>
+  <span aria-current="page">SMART</span>
+</nav>
+
+<section class="page-head">
+  <div class="wrap">
+    <p class="eyebrow">기술 해설 · 저장장치</p>
+    <h1>SMART 값 읽는 법</h1>
+    <p class="lead">SMART를 열어보면 수십 개 항목이 쏟아집니다. 대부분은 판단에 쓸 수 없는 값이고,
+      <strong>실제로 "이 디스크를 교체해야 하나"에 답하는 항목은 몇 개뿐</strong>입니다.
+      무엇을 보고 무엇을 무시해야 하는지 정리합니다.</p>
+  </div>
+</section>
+
+<section class="article">
+  <div class="wrap article-body">
+
+    <h2 id="smart란">SMART가 무엇인가</h2>
+    <p>저장장치가 스스로 자기 상태를 기록해 두는 기능입니다. 읽기 오류가 몇 번 났는지,
+      못 쓰게 된 영역을 몇 개 대체했는지, 전원이 몇 시간 켜져 있었는지 같은 것을 누적합니다.
+      <strong>디스크가 직접 세는 값</strong>이라는 점이 중요합니다 — 밖에서 추측한 수치가 아닙니다.</p>
+
+    <h2 id="핵심">실제로 봐야 할 항목</h2>
+
+    <h3>SATA / HDD·SSD</h3>
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th>항목</th><th>의미</th><th>어떻게 읽나</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>재할당 섹터 수</strong><br><span class="hint">05 Reallocated Sector Count</span></td>
+          <td>못 쓰게 된 영역을 예비 영역으로 대체한 횟수</td>
+          <td><strong>0이 아니면 주목.</strong> 이미 손상이 발생했다는 뜻입니다.
+              늘어나고 있다면 교체를 준비하세요.</td>
+        </tr>
+        <tr>
+          <td><strong>대기 중 섹터 수</strong><br><span class="hint">C5 Current Pending Sector</span></td>
+          <td>읽기에 실패해 판정을 보류 중인 영역</td>
+          <td><strong>가장 강한 경고 신호입니다.</strong> 여기 있는 데이터는 이미 읽히지 않을 수 있습니다.
+              즉시 백업하세요.</td>
+        </tr>
+        <tr>
+          <td><strong>회복 불가 섹터</strong><br><span class="hint">C6 Offline Uncorrectable</span></td>
+          <td>복구에 실패한 영역</td>
+          <td>0이 아니면 데이터 손실이 이미 일어났을 수 있습니다.</td>
+        </tr>
+        <tr>
+          <td><strong>전원 인가 시간</strong><br><span class="hint">09 Power-On Hours</span></td>
+          <td>누적 사용 시간</td>
+          <td>고장 신호는 아니지만 <strong>중고 구매 시 실제 사용량</strong>을 가늠하는 근거가 됩니다.</td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h3>NVMe SSD</h3>
+    <p>NVMe는 항목 체계가 다릅니다.</p>
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th>항목</th><th>어떻게 읽나</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Percentage Used</strong></td>
+          <td>제조사가 보증한 쓰기 수명을 몇 % 썼는지. 100%를 넘어도 즉시 고장은 아니지만
+              보증 범위를 벗어났다는 뜻입니다.</td></tr>
+        <tr><td><strong>Available Spare</strong></td>
+          <td>예비 영역이 얼마나 남았는지. 임계값 아래로 내려가면 교체 시점입니다.</td></tr>
+        <tr><td><strong>Media Errors</strong></td>
+          <td>0이 아니면 실제 데이터 오류가 발생한 것입니다.</td></tr>
+        <tr><td><strong>Critical Warning</strong></td>
+          <td>0이 아니면 장치가 스스로 경고를 올린 상태입니다. 가장 우선해서 보세요.</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h2 id="함정">읽을 때 자주 걸리는 함정</h2>
+
+    <h3>정규화 값과 원시 값은 다릅니다</h3>
+    <p>SMART 항목에는 보통 두 숫자가 붙습니다. <strong>정규화 값</strong>(100에서 시작해 나빠질수록 내려감)과
+      <strong>원시 값</strong>(실제 횟수). 정규화 값이 100이라고 안심하면 안 됩니다 —
+      제조사마다 계산이 달라서, 원시 값에 이미 문제가 잡혀 있는데 정규화 값은 여유롭게 표시되기도 합니다.
+      <strong>원시 값을 보세요.</strong></p>
+
+    <h3>임계값이 비어 있는 경우가 있습니다</h3>
+    <p>일부 장치는 임계값 자리에 숫자 대신 <code>---</code>를 보고합니다.
+      "임계값을 정의하지 않았다"는 뜻이지 값이 없다는 뜻이 아닙니다.
+      이걸 처리하지 못하는 도구는 <strong>해당 항목을 통째로 건너뛰어, 정작 봐야 할 재할당 섹터가
+      화면에서 사라지는 일</strong>이 생깁니다. DIAG.BENCH도 이 경우를 처리하도록 파서를 고친 적이 있습니다.</p>
+
+    <h3>종료 코드를 성공/실패로 읽으면 안 됩니다</h3>
+    <p>SMART 조회에 널리 쓰이는 <code>smartctl</code>은 종료 코드가 <strong>비트마스크</strong>입니다.
+      0이 아니라고 해서 실패한 것이 아니라, <strong>각 비트가 서로 다른 사실</strong>을 나타냅니다.</p>
+    <pre><code>bit 0  명령 자체가 실패
+bit 1  장치가 열리지 않음
+bit 2  일부 SMART 명령 실패
+bit 3  디스크가 "실패 예상" 상태
+bit 4  과거에 임계값을 넘은 적 있음
+...</code></pre>
+    <p>즉 <strong>값이 정상적으로 나왔는데도 종료 코드는 0이 아닐 수 있습니다.</strong>
+      이걸 단순히 "0이 아니면 오류"로 처리하면 멀쩡한 조회 결과를 버리게 됩니다.</p>
+
+    <h2 id="한계">SMART가 정상이어도 고장날 수 있습니다</h2>
+    <p>가장 중요한 한계입니다. SMART는 <strong>이미 일어난 일을 기록</strong>합니다.
+      앞으로 일어날 일을 예측하는 기능이 아닙니다.</p>
+    <ul class="tick">
+      <li>컨트롤러 고장이나 갑작스러운 전기적 손상은 <strong>SMART에 아무 흔적을 남기지 않고</strong> 일어납니다.</li>
+      <li>실제 고장의 상당수는 SMART가 모두 정상인 상태에서 발생합니다.</li>
+      <li>반대로 재할당 섹터가 몇 개 있어도 몇 년을 더 쓰는 경우도 있습니다.</li>
+    </ul>
+
+    <div class="notice notice-warn">
+      <p><strong>SMART가 깨끗하다는 것은 "지금까지 기록된 문제가 없다"는 뜻이지
+        "앞으로 안전하다"는 뜻이 아닙니다.</strong> 백업을 대신할 수 있는 진단은 없습니다.</p>
+    </div>
+
+    <h2 id="언제">그래서 언제 교체해야 하나</h2>
+    <ol class="steps">
+      <li><strong>대기 중 섹터가 0이 아니다</strong> → 지금 백업하세요. 판단은 그다음입니다.</li>
+      <li><strong>재할당 섹터가 계속 늘어난다</strong> → 교체를 준비합니다. 한 번 세고 마는 것이 아니라
+        <strong>몇 주 간격으로 다시 재서 증가 여부</strong>를 보는 것이 핵심입니다.</li>
+      <li><strong>NVMe의 Critical Warning이 0이 아니다</strong> → 장치가 스스로 경고한 상태입니다.</li>
+      <li><strong>값은 정상인데 이상 증상이 있다</strong> → SMART만으로 판단하지 말고
+        <a href="learn-event-log.html">이벤트 로그의 디스크 오류</a>를 함께 확인하세요.</li>
+    </ol>
+
+    <h2 id="관련">더 읽어보기</h2>
+    <ul class="plain-list">
+      <li><a href="learn-event-log.html">Windows 이벤트 로그로 하드웨어 문제 찾기</a></li>
+      <li><a href="learn-result-states.html">"검사하지 않음"은 "정상"이 아닙니다</a></li>
+      <li><a href="use-used-pc.html">중고 PC 살 때 확인할 것</a></li>
+    </ul>
+
+  </div>
+</section>
+
+<section class="final-cta">
+  <div class="wrap">
+    <h2>내 디스크의 SMART를 확인해 보세요</h2>
+    <p>DIAG.BENCH는 smartctl로 SMART를 읽고, 위 항목을 기준으로 실제 위험 신호만 골라 알려줍니다.</p>
+    <div class="cta">
+      <a class="btn btn-primary" href="{{DOWNLOAD_URL}}">
+        <span class="btn-main">{{DOWNLOAD_LABEL}}</span>
+        <span class="btn-sub">{{DOWNLOAD_SUB}}</span>
+      </a>
+    </div>
+  </div>
+</section>

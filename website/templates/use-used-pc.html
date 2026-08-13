@@ -1,0 +1,125 @@
+<!--TITLE:중고 PC·노트북 살 때 확인해야 할 것 — 10분 점검 순서-->
+<!--DESC:중고 PC를 살 때 겉모습으로는 알 수 없는 것들이 있습니다. 실제 사용 시간, 배터리 열화, 이전 사용자의 오버클럭 설정, 디스크 손상 이력을 확인하는 순서를 안내합니다.-->
+
+<nav class="crumbs" aria-label="현재 위치">
+  <a href="index.html">홈</a> <span aria-hidden="true">›</span>
+  <span aria-current="page">중고 PC 점검</span>
+</nav>
+
+<section class="page-head">
+  <div class="wrap">
+    <p class="eyebrow">활용</p>
+    <h1>중고 PC 살 때 확인해야 할 것</h1>
+    <p class="lead">중고 거래에서 가장 어려운 점은 <strong>겉모습이 상태를 말해주지 않는다</strong>는 것입니다.
+      깨끗한 외관에 사용 시간 3만 시간짜리 디스크가 들어 있을 수도, 이전 사용자의 오버클럭 설정이
+      그대로 남아 있을 수도 있습니다. 짧은 시간에 확인할 수 있는 것부터 순서대로 정리했습니다.</p>
+  </div>
+</section>
+
+<section class="article">
+  <div class="wrap article-body">
+
+    <h2 id="핵심">거래 현장에서 꼭 봐야 할 다섯 가지</h2>
+    <p>시간이 없다면 이것만이라도 확인하세요. 판매자가 말해주지 않고, 겉으로 보이지 않으며,
+      <strong>나중에 발견하면 돌이키기 어려운</strong> 항목들입니다.</p>
+
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th>확인할 것</th><th>왜 중요한가</th><th>무엇을 보나</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>디스크 실제 사용 시간</strong></td>
+          <td>"거의 안 썼다"는 말과 실제 기록이 다른 경우가 많습니다.</td>
+          <td>SMART의 전원 인가 시간. 3만 시간이면 약 3.4년을 24시간 켜둔 것입니다.</td>
+        </tr>
+        <tr>
+          <td><strong>디스크 손상 이력</strong></td>
+          <td>재할당·대기 섹터는 <strong>이미 손상이 일어났다</strong>는 기록입니다. 되돌아가지 않습니다.</td>
+          <td>재할당 섹터, 대기 중 섹터가 0인지. <a href="learn-smart.html">읽는 법</a></td>
+        </tr>
+        <tr>
+          <td><strong>배터리 실제 용량</strong><br><span class="hint">노트북</span></td>
+          <td>교체 비용이 큽니다. 잔량 표시(%)로는 알 수 없습니다.</td>
+          <td>완충 용량 ÷ 설계 용량. <a href="learn-battery-health.html">확인하는 법</a></td>
+        </tr>
+        <tr>
+          <td><strong>설정 변경 흔적</strong></td>
+          <td>이전 사용자의 오버클럭은 <strong>초기화하지 않는 한 남아 있습니다.</strong></td>
+          <td>CPU 기본 클럭이 정품 사양보다 높은지, GPU 전력 제한이 기본값과 다른지</td>
+        </tr>
+        <tr>
+          <td><strong>최근 하드웨어 오류</strong></td>
+          <td>간헐적으로 꺼지는 증상은 짧은 시연으로는 절대 드러나지 않습니다.</td>
+          <td>WHEA 오류, 예기치 않은 종료 기록. <a href="learn-event-log.html">읽는 법</a></td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+
+    <div class="notice notice-warn">
+      <p><strong>"켜보니 잘 되던데요"는 근거가 아닙니다.</strong> 대부분의 중고 거래 분쟁은
+        멀쩡히 켜지는 PC에서 시작됩니다. 문제는 <strong>10분 시연으로는 드러나지 않는 종류</strong>이기 때문입니다.
+        위 항목은 전부 기록으로 남아 있어서, 짧은 시간에도 확인할 수 있습니다.</p>
+    </div>
+
+    <h2 id="순서">현장 점검 순서</h2>
+    <ol class="steps">
+      <li><strong>PC를 켜고 몇 분 그대로 둡니다.</strong> 그동안 외관과 포트를 확인하세요.
+        곧바로 측정하면 부팅 직후의 높은 부하가 값을 왜곡합니다.</li>
+      <li><strong>중고 PC 점검 프로필로 진단을 실행합니다.</strong>
+        DIAG.BENCH에는 이 상황을 위한 프로필이 따로 있습니다 — 약 2분이 걸리고,
+        위 다섯 항목을 포함해 확인합니다.</li>
+      <li><strong>"검사하지 않음" 항목이 있는지 봅니다.</strong>
+        측정하지 못한 항목이 있다면 <a href="learn-result-states.html">그것은 정상이 아니라 미확인</a>입니다.
+        중요한 항목이 미확인이라면 조건을 갖춰 다시 재보세요.</li>
+      <li><strong>결과를 판매자와 함께 봅니다.</strong> 값이 근거로 남아 있으면 가격 협상도,
+        나중의 분쟁도 훨씬 명확해집니다.</li>
+    </ol>
+
+    <h2 id="리포트">점검 결과를 문서로 남기기</h2>
+    <p>거래 후에 문제가 생기면 <strong>"받았을 때 이미 그랬는지"</strong>가 쟁점이 됩니다.
+      말로는 증명되지 않습니다.</p>
+    <p>DIAG.BENCH의 점검 리포트는 이 상황을 위한 것입니다.</p>
+    <ul class="tick">
+      <li>측정 시각, 기기 식별 정보, 실제로 실행한 검사 항목이 기록됩니다.</li>
+      <li><strong>실행하지 않은 검사는 실행했다고 적히지 않습니다.</strong>
+        검사 범위가 사실대로 남습니다.</li>
+      <li>내용에 대한 <strong>검증 해시</strong>가 함께 발급됩니다.
+        고객명 한 글자만 바뀌어도 검증에 실패하므로, 나중에 고쳐 쓴 문서인지 구분할 수 있습니다.</li>
+    </ul>
+    <p>거래 당일에 한 장 뽑아 서로 보관해두면, 이후 분쟁의 상당 부분이 사전에 정리됩니다.</p>
+
+    <h2 id="한계">이 방법으로도 알 수 없는 것</h2>
+    <p>정직하게 적어둡니다. 소프트웨어 진단으로 <strong>확인할 수 없는 것들이 있습니다.</strong></p>
+    <ul class="tick">
+      <li><strong>침수나 물리적 충격 이력</strong> — 기록에 남지 않습니다. 내부를 눈으로 봐야 합니다.</li>
+      <li><strong>파워서플라이 상태</strong> — 부하를 걸어봐야 알 수 있고, 그마저 확실하지 않습니다.</li>
+      <li><strong>앞으로 고장날지</strong> — <a href="learn-smart.html">SMART가 깨끗해도 고장은 납니다.</a></li>
+      <li><strong>메인보드 콘덴서 상태</strong> — 육안 확인이 필요합니다. 부풀거나 새어나온 흔적을 보세요.</li>
+    </ul>
+    <p>진단은 <strong>확인할 수 있는 범위를 확실히 확인하는 것</strong>이지, 모든 위험을 없애는 방법이 아닙니다.
+      나머지는 여전히 눈으로 보고 판단해야 합니다.</p>
+
+    <h2 id="관련">더 읽어보기</h2>
+    <ul class="plain-list">
+      <li><a href="learn-smart.html">SMART 값 읽는 법 — 어떤 항목이 실제로 위험한가</a></li>
+      <li><a href="learn-battery-health.html">노트북 배터리 실제 용량 확인하는 법</a></li>
+      <li><a href="guide-cpu-overclock-detected.html">CPU가 오버클럭되어 있는지 확인하는 법</a></li>
+      <li><a href="learn-result-states.html">"검사하지 않음"은 "정상"이 아닙니다</a></li>
+    </ul>
+
+  </div>
+</section>
+
+<section class="final-cta">
+  <div class="wrap">
+    <h2>거래 전에 2분만 투자하세요</h2>
+    <p>중고 PC 점검 프로필로 위 항목을 한 번에 확인하고, 결과를 문서로 남길 수 있습니다.</p>
+    <div class="cta">
+      <a class="btn btn-primary" href="{{DOWNLOAD_URL}}">
+        <span class="btn-main">{{DOWNLOAD_LABEL}}</span>
+        <span class="btn-sub">{{DOWNLOAD_SUB}}</span>
+      </a>
+    </div>
+  </div>
+</section>
