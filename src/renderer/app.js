@@ -116,8 +116,9 @@ function renderReport(report) {
         <div class="detail-explain">${issue.explanation}</div>
         <div class="detail-cols">
           <div class="detail-col"><div class="detail-col-label">가능한 원인</div><ul>${issue.causes.map((c) => `<li>${c}</li>`).join('')}</ul></div>
-          <div class="detail-col"><div class="detail-col-label">권장 조치</div><ul>${issue.actions.map((a) => `<li>${a}</li>`).join('')}</ul></div>
+          <div class="detail-col"><div class="detail-col-label">권장 조치</div><ul>${renderActions(issue)}</ul></div>
         </div>
+        ${renderWizard(issue)}
         ${issue.topProcesses ? `
           <div class="process-list">
             <div class="detail-col-label">점유율 높은 프로세스</div>
@@ -331,6 +332,60 @@ document.getElementById('history-clear-btn').addEventListener('click', async () 
 document.querySelector('[data-target="view-history"]').addEventListener('click', loadHistoryView);
 
 /* ============================================================
+   조치 위험도(§14) · 해결 Wizard(§44) · 안전 안내(§45)
+   ------------------------------------------------------------
+   내용은 전부 엔진의 지식 DB(issueDb.js)에서 온다. 화면은 배치와 색만 담당한다.
+   여기서 문구를 따로 쓰기 시작하면 화면·리포트·Wizard가 서로 다른 말을 하게 된다.
+============================================================ */
+const RISK_TONE = {
+  SAFE: '#16a34a', LOW: '#65a30d', INTERMEDIATE: '#d97706', ADVANCED: '#ea580c', EXPERT: '#dc2626',
+};
+const RISK_SHORT = {
+  SAFE: '안전', LOW: '낮음', INTERMEDIATE: '중간', ADVANCED: '높음', EXPERT: '매우 높음',
+};
+function riskChip(risk) {
+  if (!risk) return '';
+  return `<span style="font-size:11px;font-weight:600;color:${RISK_TONE[risk] || '#6b7280'};border:1px solid currentColor;border-radius:4px;padding:0 5px;margin-left:6px;">${RISK_SHORT[risk] || risk}</span>`;
+}
+
+// 조치는 위험도를 아는 경우에만 뱃지를 단다(예전 이슈는 문자열만 있다).
+function renderActions(issue) {
+  const list = issue.actionDetails && issue.actionDetails.length
+    ? issue.actionDetails
+    : (issue.actions || []).map((text) => ({ text, risk: null }));
+  return list.map((a) => `<li>${escHtml(a.text)}${riskChip(a.risk)}</li>`).join('');
+}
+
+function escHtml(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function renderWizard(issue) {
+  const w = issue.wizard;
+  if (!w || !w.steps || !w.steps.length) return '';
+  return `
+    <details class="detail-verify" style="margin-top:10px;">
+      <summary style="cursor:pointer;font-weight:600;">단계별 해결 방법 (${w.steps.length}단계)${riskChip(w.highestRisk)}</summary>
+      ${w.warning ? `<div class="note-card" style="margin-top:10px;">⚠️ ${escHtml(w.warning)}</div>` : ''}
+      <ol style="margin-top:10px;padding-left:20px;">
+        ${w.steps.map((s) => `<li style="margin-bottom:10px;">
+          <b>${escHtml(s.title)}</b>${riskChip(s.risk)}
+          <div class="mini-desc" style="margin-top:2px;">${escHtml(s.detail)}</div>
+          ${s.screen ? `<button class="btn wizard-goto" data-screen="${escHtml(s.screen)}" style="margin-top:6px;padding:3px 10px;font-size:12px;">해당 화면 열기</button>` : ''}
+        </li>`).join('')}
+      </ol>
+    </details>`;
+}
+
+// Wizard 단계에서 해당 화면으로 이동시킨다.
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('.wizard-goto');
+  if (!btn) return;
+  const navBtn = document.querySelector(`[data-target="${btn.dataset.screen}"]`);
+  if (navBtn) navBtn.click();
+});
+
+/* ============================================================
    DIAGNOSTIC PROFILES — 목적별 검사
    ------------------------------------------------------------
    화면은 아무것도 판정하지 않는다. 어떤 검사를 건너뛸지도, 그 결과를 어떻게 부를지도
@@ -340,9 +395,7 @@ const RESULT_TONE = {
   PASS: '#16a34a', WARNING: '#d97706', ERROR: '#dc2626', CRITICAL: '#b91c1c',
   NOT_TESTED: '#6b7280', UNKNOWN: '#6b7280',
 };
-function esc(s) {
-  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
+const esc = escHtml; // 같은 일을 하는 함수를 두 개 두지 않는다
 
 async function loadProfilesView() {
   const list = await window.diagAPI.listProfiles();

@@ -27,10 +27,8 @@ const STATUS = {
   UNKNOWN: 'unknown',
 };
 
-const RISK = {
-  SAFE: 'SAFE', LOW: 'LOW', INTERMEDIATE: 'INTERMEDIATE', ADVANCED: 'ADVANCED', EXPERT: 'EXPERT',
-};
-const act = (text, risk) => ({ text, risk });
+// 제목·원인·조치·재검사·Wizard는 issueDb에 모여 있다. 여기는 측정·판정만 한다.
+const { knowledge } = require('./issueDb');
 
 // 기본 클럭이 이 비율을 넘게 올라가 있으면 설정 변경으로 본다.
 // 3401MHz ↔ 표기 3.40GHz처럼 반올림 오차가 있으므로 여유를 둔다.
@@ -64,27 +62,24 @@ function analyzeConfiguration({ overclockState, memorySummary } = {}) {
     } else if (cpuState.maxClockGHz && cpuState.maxClockGHz > cpuState.stockBaseGHz * CPU_BASE_CLOCK_TOLERANCE) {
       cpu.status = STATUS.MODIFIED;
       const pct = Math.round(((cpuState.maxClockGHz / cpuState.stockBaseGHz) - 1) * 100);
+      const kb = knowledge('CPU-BASE-CLOCK-MODIFIED');
       cpu.findings.push({
-        ruleId: 'CPU_BASE_CLOCK_MODIFIED',
-        ruleVersion: RULESET_VERSION,
+        ruleId: kb.id,
+        ruleVersion: kb.version,
         level: 'watch',
-        title: 'CPU 기본 클럭이 정품 사양보다 높습니다 (설정 변경됨)',
+        title: kb.title,
         explanation: `이 CPU의 정품 기본 클럭은 ${cpuState.stockBaseGHz}GHz인데 시스템은 ${cpuState.maxClockGHz}GHz로 보고합니다(약 ${pct}% 높음). `
           + 'BIOS에서 베이스 클럭(BCLK)이나 배수가 조정된 상태로 보입니다. 그 자체가 고장은 아니지만, '
           + '중고로 받은 PC라면 이전 사용자가 바꿔둔 설정일 수 있어 알려드립니다.',
-        causes: ['BIOS에서 BCLK 또는 배수를 수동으로 올림', '메인보드의 자동 오버클럭 기능이 켜져 있음'],
-        actions: [
-          act('의도한 설정인지 확인하세요 (중고 PC라면 이전 사용자 설정일 수 있습니다)', RISK.SAFE),
-          act('안정성 테스트 탭에서 CPU 부하 테스트를 실행해 현재 설정에서 문제가 없는지 확인하세요', RISK.SAFE),
-          act('불안정하다면 BIOS에서 기본값(Load Optimized Defaults)으로 되돌리세요', RISK.INTERMEDIATE),
-        ],
+        causes: kb.causes,
+        actions: kb.actions,
         confidence: 'STRONG_INDICATION',
         evidence: [
           `정품 기본 클럭 ${cpuState.stockBaseGHz}GHz (모델명 표기) / 시스템 보고 ${cpuState.maxClockGHz}GHz`,
           ...(cpuState.bclkMHz && cpuState.bclkMHz !== TYPICAL_BCLK_MHZ ? [`BCLK ${cpuState.bclkMHz}MHz (일반적인 기본값 ${TYPICAL_BCLK_MHZ}MHz와 다름)`] : []),
           '설정이 변경됐다는 사실만 확인한 것이며, 불안정하다는 뜻은 아닙니다',
         ],
-        verification: 'BIOS 설정을 확인/변경한 뒤 전체 진단을 다시 실행해 기본 클럭 표기가 달라졌는지 확인하세요.',
+        verification: kb.verification,
       });
     } else {
       cpu.status = STATUS.STOCK;
@@ -108,22 +103,23 @@ function analyzeConfiguration({ overclockState, memorySummary } = {}) {
     } else if (pl !== dflt) {
       gpu.status = STATUS.MODIFIED;
       const raised = pl > dflt;
+      const kb = knowledge('GPU-POWER-LIMIT-MODIFIED');
       gpu.findings.push({
-        ruleId: 'GPU_POWER_LIMIT_MODIFIED',
-        ruleVersion: RULESET_VERSION,
+        ruleId: kb.id,
+        ruleVersion: kb.version,
         level: 'watch',
-        title: `GPU 전력 제한이 기본값과 다릅니다 (${raised ? '상향' : '하향'}됨)`,
+        // 제목에 상향/하향만 덧붙인다 — 방향은 측정 결과라 여기서 만든다.
+        title: `${kb.title} (${raised ? '상향' : '하향'}됨)`,
         explanation: `이 GPU의 기본 전력 제한은 ${dflt}W인데 현재 ${pl}W로 설정되어 있습니다. `
           + (raised
             ? '전력 제한을 올리면 성능이 오를 수 있지만 발열과 소비 전력도 함께 늘어납니다. '
             : '전력 제한을 내리면 발열과 소비 전력이 줄지만 성능이 제한됩니다. ')
           + '고장이 아니라 설정 상태입니다.',
-        causes: [raised ? '오버클럭 유틸리티로 전력 제한 상향' : '언더볼팅/저소음 목적의 전력 제한 하향', '이전 사용자가 설정한 프로파일이 남아 있음'],
-        actions: [
-          act('의도한 설정인지 확인하세요 (중고 PC라면 이전 사용자 설정일 수 있습니다)', RISK.SAFE),
-          act('안정성 테스트 탭에서 GPU 부하 테스트를 실행해 현재 설정에서 문제가 없는지 확인하세요', RISK.SAFE),
-          act(`기본값으로 되돌리려면 nvidia-smi -pl ${dflt} (관리자 권한 필요)`, RISK.INTERMEDIATE),
-        ],
+        causes: kb.causes,
+        // 되돌릴 실제 값은 측정 결과라 여기서 채운다.
+        actions: kb.actions.map((a) => (a.text.includes('nvidia-smi -pl')
+          ? { ...a, text: `기본값으로 되돌리려면 nvidia-smi -pl ${dflt} (관리자 권한 필요)` }
+          : a)),
         confidence: 'CONFIRMED',
         evidence: [
           `현재 전력 제한 ${pl}W / 기본값 ${dflt}W`,
@@ -131,7 +127,7 @@ function analyzeConfiguration({ overclockState, memorySummary } = {}) {
             ? [`이 GPU가 허용하는 범위 ${gpuState.minPowerLimitW}~${gpuState.maxPowerLimitW}W`] : []),
           '드라이버가 보고한 값을 그대로 비교한 것이라 확실합니다',
         ],
-        verification: '설정을 되돌린 뒤 전체 진단을 다시 실행해 전력 제한이 기본값과 같아졌는지 확인하세요.',
+        verification: kb.verification,
       });
     } else {
       gpu.status = STATUS.STOCK;

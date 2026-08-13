@@ -11,6 +11,7 @@ const { analyzeMemoryConfig } = require('../src/engine/memoryConfig');
 const { analyzeConfiguration } = require('../src/engine/overclock');
 const { parsePingOutput } = require('../src/engine/collectors');
 const { PROFILES, resolveProfile, listProfiles } = require('../src/engine/profiles');
+const { listIssues, getIssue, wizardFor, RISK_ORDER } = require('../src/engine/issueDb');
 const { compareSessions } = require('../src/engine/sessionCompare');
 const { extractMetrics, hardwareKeyOf, scopeKeyOf } = require('../src/engine/sessions');
 const { buildInspectionReport } = require('../src/engine/inspectionReport');
@@ -1549,7 +1550,7 @@ test('[기획서 §7 핵심 사례] 혼합 DIMM + 정격 미달 → 경고', () 
     dimm({ slot: 'ChannelB-DIMM0', partNumber: 'BBB-2666', ratedSpeedMTs: 2666, configuredSpeedMTs: 2666 }),
     dimm({ slot: 'ChannelB-DIMM1', partNumber: 'BBB-2666', ratedSpeedMTs: 2666, configuredSpeedMTs: 2666 }),
   ]));
-  const f = c.findings.find((x) => x.ruleId === 'MEMORY_MIXED_DIMM_BELOW_RATED');
+  const f = c.findings.find((x) => x.ruleId === 'MEMORY-MIXED-DIMM-BELOW-RATED');
   assert.ok(f, `혼합+정격미달 규칙이 걸려야 함: ${c.findings.map((x) => x.ruleId).join(', ')}`);
   assert.strictEqual(f.level, 'warning');
   assert.ok(f.explanation.includes('2666') && f.explanation.includes('3200'));
@@ -1572,7 +1573,7 @@ test('동일 모듈인데 정격보다 낮으면 watch (BIOS 설정 가능성)',
     dimm({ slot: 'ChannelA-DIMM0', ratedSpeedMTs: 3200, configuredSpeedMTs: 2133 }),
     dimm({ slot: 'ChannelB-DIMM0', ratedSpeedMTs: 3200, configuredSpeedMTs: 2133 }),
   ]));
-  const f = c.findings.find((x) => x.ruleId === 'MEMORY_BELOW_RATED_SPEED');
+  const f = c.findings.find((x) => x.ruleId === 'MEMORY-BELOW-RATED-SPEED');
   assert.ok(f);
   assert.strictEqual(f.level, 'watch');
 });
@@ -1582,7 +1583,7 @@ test('[기획서 §8] 정격보다 높으면 "설정 변경됨"으로 알리되 
     dimm({ slot: 'ChannelA-DIMM0', ratedSpeedMTs: 2666, configuredSpeedMTs: 3200 }),
     dimm({ slot: 'ChannelB-DIMM0', ratedSpeedMTs: 2666, configuredSpeedMTs: 3200 }),
   ]));
-  const f = c.findings.find((x) => x.ruleId === 'MEMORY_ABOVE_RATED_SPEED');
+  const f = c.findings.find((x) => x.ruleId === 'MEMORY-ABOVE-RATED-SPEED');
   assert.ok(f);
   assert.strictEqual(f.level, 'watch');
   assert.ok(!/고장|불량/.test(f.title), `제목에서 고장이라고 단정하면 안 됨: ${f.title}`);
@@ -1594,7 +1595,7 @@ test('싱글 채널 장착을 감지한다', () => {
   const c = analyzeMemoryConfig(memMods([
     dimm({ slot: 'ChannelA-DIMM0' }), dimm({ slot: 'ChannelA-DIMM1' }),
   ]));
-  assert.ok(c.findings.find((x) => x.ruleId === 'MEMORY_SINGLE_CHANNEL'));
+  assert.ok(c.findings.find((x) => x.ruleId === 'MEMORY-SINGLE-CHANNEL'));
 });
 
 test('슬롯 이름에서 채널을 못 읽으면 채널 얘기를 아예 하지 않는다', () => {
@@ -1602,7 +1603,7 @@ test('슬롯 이름에서 채널을 못 읽으면 채널 얘기를 아예 하지
     dimm({ slot: 'XPG-SLOT-1' }), dimm({ slot: 'XPG-SLOT-2' }),
   ]));
   assert.strictEqual(c.summary.channelsKnown, false);
-  assert.ok(!c.findings.find((x) => x.ruleId === 'MEMORY_SINGLE_CHANNEL'), '근거 없이 싱글 채널이라 하면 안 됨');
+  assert.ok(!c.findings.find((x) => x.ruleId === 'MEMORY-SINGLE-CHANNEL'), '근거 없이 싱글 채널이라 하면 안 됨');
   assert.ok(c.notTested.some((n) => n.includes('채널')), '검사 못 한 것으로 명시해야 함');
 });
 
@@ -1633,7 +1634,7 @@ test('진단 엔진에 연결되어 RAM 섹션 상태를 바꾼다', () => {
   }));
   const ram = findSection(r, 'RAM');
   assert.strictEqual(ram.status, 'warning');
-  const issue = ram.issues.find((i) => i.ruleId === 'MEMORY_MIXED_DIMM_BELOW_RATED');
+  const issue = ram.issues.find((i) => i.ruleId === 'MEMORY-MIXED-DIMM-BELOW-RATED');
   assert.ok(issue, 'Rule ID가 이슈에 실려야 함');
   assert.ok(issue.ruleVersion, 'Rule 버전이 실려야 함 (과거 결과 설명용)');
   assert.strictEqual(issue.confidenceLevel, 'STRONG_INDICATION');
@@ -1647,7 +1648,7 @@ test('[기획서 §14] 조치마다 위험도가 붙는다', () => {
       dimm({ slot: 'ChannelB-DIMM0', ratedSpeedMTs: 3200, configuredSpeedMTs: 2133 }),
     ]),
   }));
-  const issue = findSection(r, 'RAM').issues.find((i) => i.ruleId === 'MEMORY_BELOW_RATED_SPEED');
+  const issue = findSection(r, 'RAM').issues.find((i) => i.ruleId === 'MEMORY-BELOW-RATED-SPEED');
   assert.ok(issue.actionDetails.length > 0);
   assert.ok(issue.actionDetails.every((a) => a.risk), '모든 조치에 위험도가 있어야 함');
   assert.ok(issue.actionDetails.some((a) => a.risk === 'SAFE'), '확인만 하는 안전한 조치가 먼저 있어야 함');
@@ -1690,7 +1691,7 @@ test('정품 설정이면 stock으로 판정하고 이슈를 만들지 않는다
 test('[기획서 §8] GPU 전력 제한이 기본값과 다르면 "설정 변경됨"', () => {
   const c = analyzeConfiguration({ overclockState: ocState({ gpu: { powerLimitW: 140 } }), memorySummary: stockMemSummary });
   assert.strictEqual(c.gpu.status, 'modified');
-  const f = c.gpu.findings.find((x) => x.ruleId === 'GPU_POWER_LIMIT_MODIFIED');
+  const f = c.gpu.findings.find((x) => x.ruleId === 'GPU-POWER-LIMIT-MODIFIED');
   assert.ok(f);
   assert.strictEqual(f.confidence, 'CONFIRMED', '드라이버가 준 값 비교라 확실해야 함');
   assert.ok(f.title.includes('상향'));
@@ -1704,7 +1705,7 @@ test('전력 제한 하향(언더볼팅/저소음)도 같은 규칙으로 잡는
 test('CPU 기본 클럭이 정품보다 높으면 설정 변경으로 본다', () => {
   const c = analyzeConfiguration({ overclockState: ocState({ cpu: { maxClockGHz: 3.8, bclkMHz: 112 } }), memorySummary: stockMemSummary });
   assert.strictEqual(c.cpu.status, 'modified');
-  const f = c.cpu.findings.find((x) => x.ruleId === 'CPU_BASE_CLOCK_MODIFIED');
+  const f = c.cpu.findings.find((x) => x.ruleId === 'CPU-BASE-CLOCK-MODIFIED');
   assert.ok(f);
   assert.ok(f.evidence.some((e) => e.includes('112')), 'BCLK 이탈도 근거에 넣어야 함');
 });
@@ -1755,7 +1756,7 @@ test('진단 엔진에 연결되어 GPU 섹션에 이슈로 나타난다', () =>
     overclockState: ocState({ gpu: { powerLimitW: 140 } }),
   }));
   const g = findSection(r, 'GPU');
-  assert.ok(g.issues.find((i) => i.ruleId === 'GPU_POWER_LIMIT_MODIFIED'));
+  assert.ok(g.issues.find((i) => i.ruleId === 'GPU-POWER-LIMIT-MODIFIED'));
   assert.strictEqual(g.configStatus, 'modified');
   assert.ok(r.configuration, '리포트 최상위에 설정 상태 요약이 실려야 함');
 });
@@ -1766,7 +1767,7 @@ test('[기획서 §12] 설정 변경 + 하드웨어 오류 이벤트 → 조사 
     eventLog: withEvents({ whea: 3 }),
   }));
   const sys = findSection(r, 'EVENTS');
-  const issue = sys.issues.find((i) => i.ruleId === 'CONFIG_STABILITY_INVESTIGATION');
+  const issue = sys.issues.find((i) => i.ruleId === 'CONFIG-STABILITY-INVESTIGATION');
   assert.ok(issue, '둘 다 있으면 조사 대상으로 올려야 함');
   assert.strictEqual(issue.confidenceLevel, 'NEEDS_VERIFICATION', '인과를 단정하면 안 됨');
   assert.ok(issue.evidence.some((e) => e.includes('인과관계는 확인되지 않았습니다')));
@@ -1775,14 +1776,14 @@ test('[기획서 §12] 설정 변경 + 하드웨어 오류 이벤트 → 조사 
 test('[핵심] 설정만 변경되고 오류가 없으면 조사 대상으로 올리지 않는다', () => {
   const r = buildReport(baseInput({ overclockState: ocState({ gpu: { powerLimitW: 140 } }) }));
   const sys = findSection(r, 'EVENTS');
-  assert.ok(!sys.issues.find((i) => i.ruleId === 'CONFIG_STABILITY_INVESTIGATION'),
+  assert.ok(!sys.issues.find((i) => i.ruleId === 'CONFIG-STABILITY-INVESTIGATION'),
     '설정 변경만으로 문제라고 하면 과잉 경고다');
 });
 
 test('[핵심] 오류만 있고 설정이 정품이면 설정 탓을 하지 않는다', () => {
   const r = buildReport(baseInput({ overclockState: ocState(), eventLog: withEvents({ whea: 3 }) }));
   const sys = findSection(r, 'EVENTS');
-  assert.ok(!sys.issues.find((i) => i.ruleId === 'CONFIG_STABILITY_INVESTIGATION'));
+  assert.ok(!sys.issues.find((i) => i.ruleId === 'CONFIG-STABILITY-INVESTIGATION'));
 });
 
 test('설정 정보가 없어도 기존 진단이 깨지지 않는다', () => {
@@ -1978,6 +1979,121 @@ test('프로필 없이 부른 기존 경로는 그대로 동작한다', () => {
   const r = buildReport(baseInput());
   assert.strictEqual(r.profile, null);
   assert.strictEqual(findSection(r, 'CPU').status, 'normal');
+});
+
+// ============================================================
+section('문제 해결 지식 DB (기획서 §39) · 해결 Wizard (§44) · 안전 설계 (§45)');
+// ============================================================
+
+test('모든 항목이 필수 필드를 빠짐없이 갖는다', () => {
+  listIssues().forEach((e) => {
+    ['version', 'category', 'title', 'detection', 'symptoms', 'causes', 'actions', 'verification'].forEach((k) => {
+      assert.ok(e[k] && (!Array.isArray(e[k]) || e[k].length), `${e.id}: ${k}가 비어 있음`);
+    });
+  });
+});
+
+test('[기획서 §14] 모든 조치에 위험도가 붙어 있다', () => {
+  // 위험도가 없는 조치는 사용자가 "이걸 내가 해도 되나"를 판단할 근거가 없다.
+  listIssues().forEach((e) => {
+    e.actions.forEach((a) => {
+      assert.ok(a.text, `${e.id}: 조치 문구가 비어 있음`);
+      assert.ok(RISK_ORDER.includes(a.risk), `${e.id}: 알 수 없는 위험도 ${a.risk}`);
+    });
+  });
+});
+
+test('확인만 하는 안전한 조치가 항상 먼저 온다', () => {
+  // 되돌리기 어려운 것부터 제시하면 사용자가 불필요한 위험을 감수하게 된다.
+  listIssues().forEach((e) => {
+    assert.strictEqual(e.actions[0].risk, 'SAFE', `${e.id}: 첫 조치가 SAFE가 아님 (${e.actions[0].risk})`);
+  });
+});
+
+test('Wizard가 있는 항목은 마지막 단계가 재검사다', () => {
+  // "고쳤다"로 끝나면 개선됐는지 알 수 없다. 반드시 다시 재서 확인하게 한다.
+  listIssues().filter((e) => e.wizard && e.wizard.length).forEach((e) => {
+    const last = e.wizard[e.wizard.length - 1];
+    assert.ok(/재검사|재측정|확인/.test(last.title), `${e.id}: 마지막 단계가 재검사가 아님 — ${last.title}`);
+  });
+});
+
+test('Wizard 단계에도 전부 위험도가 있다', () => {
+  listIssues().filter((e) => e.wizard).forEach((e) => {
+    e.wizard.forEach((s) => {
+      assert.ok(RISK_ORDER.includes(s.risk), `${e.id}: 단계 "${s.title}"에 위험도가 없음`);
+      assert.ok(s.detail && s.detail.length > 10, `${e.id}: 단계 "${s.title}" 설명이 부실함`);
+    });
+  });
+});
+
+test('[기획서 §45] 되돌리기 어려운 단계가 있으면 먼저 경고한다', () => {
+  const w = wizardFor('MEMORY-MIXED-DIMM-BELOW-RATED');
+  assert.ok(w);
+  assert.strictEqual(w.highestRisk, 'INTERMEDIATE');
+  assert.ok(w.warning && w.warning.includes('되돌리기 어려운'), w.warning);
+  assert.ok(w.warning.includes('CMOS'), '복구 방법까지 알려줘야 함');
+});
+
+test('안전한 단계만 있는 절차에는 불필요한 경고를 달지 않는다', () => {
+  const w = wizardFor('BASELINE-IDLE-MEMORY-RISE');
+  assert.ok(w);
+  assert.strictEqual(w.warning, null, `불필요한 경고: ${w.warning}`);
+});
+
+test('Wizard 단계에 번호와 위험도 설명이 붙는다', () => {
+  const w = wizardFor('CPU-BASE-CLOCK-MODIFIED');
+  assert.strictEqual(w.steps[0].index, 1);
+  assert.ok(w.steps.every((s) => s.riskLabel));
+});
+
+test('절차가 없는 문제에는 Wizard를 만들어 붙이지 않는다', () => {
+  assert.strictEqual(wizardFor('없는-문제-ID'), null);
+});
+
+test('[핵심] 규칙이 만든 이슈와 지식 DB의 안내가 어긋나지 않는다', () => {
+  // 안내 문구를 두 곳에서 각자 쓰면 화면·리포트·Wizard가 서로 다른 말을 하게 된다.
+  const r = buildReport(baseInput({
+    memoryModules: memMods([
+      dimm({ slot: 'ChannelA-DIMM0', partNumber: 'AAA-3200', ratedSpeedMTs: 3200, configuredSpeedMTs: 2666 }),
+      dimm({ slot: 'ChannelB-DIMM0', partNumber: 'BBB-2666', ratedSpeedMTs: 2666, configuredSpeedMTs: 2666 }),
+    ]),
+  }));
+  const issue = findSection(r, 'RAM').issues.find((i) => i.ruleId === 'MEMORY-MIXED-DIMM-BELOW-RATED');
+  const kb = getIssue('MEMORY-MIXED-DIMM-BELOW-RATED');
+  assert.deepStrictEqual(issue.causes, kb.causes, '원인 후보가 DB와 달라짐');
+  assert.deepStrictEqual(issue.actionDetails, kb.actions, '조치가 DB와 달라짐');
+  assert.strictEqual(issue.verification, kb.verification, '재검사 방법이 DB와 달라짐');
+  assert.strictEqual(issue.ruleVersion, kb.version, '버전이 DB와 달라짐');
+});
+
+test('이슈에 Wizard가 실려 화면에서 바로 쓸 수 있다', () => {
+  const r = buildReport(baseInput({
+    memoryModules: memMods([
+      dimm({ slot: 'ChannelA-DIMM0', ratedSpeedMTs: 3200, configuredSpeedMTs: 2133 }),
+      dimm({ slot: 'ChannelB-DIMM0', ratedSpeedMTs: 3200, configuredSpeedMTs: 2133 }),
+    ]),
+  }));
+  const issue = findSection(r, 'RAM').issues.find((i) => i.ruleId === 'MEMORY-BELOW-RATED-SPEED');
+  assert.ok(issue.wizard, 'Wizard가 이슈에 붙어야 함');
+  assert.ok(issue.wizard.steps.length >= 3);
+  assert.strictEqual(issue.wizard.issueId, 'MEMORY-BELOW-RATED-SPEED');
+});
+
+test('기준선 이슈도 Issue ID와 Wizard를 갖는다', () => {
+  const r = buildReport(baseInput({
+    cpu: { model: 'Test CPU', loadPercent: 6, tempC: 60, clockGHz: 1.2 },
+    baseline: baselineRecord(),
+  }));
+  const issue = findSection(r, 'CPU').issues.find((i) => i.ruleId === 'BASELINE-IDLE-TEMP-RISE');
+  assert.ok(issue, '기준선 이슈에 Issue ID가 있어야 함');
+  assert.ok(issue.wizard, '기준선 이슈에도 해결 절차가 있어야 함');
+  assert.ok(issue.wizard.steps.some((s) => s.screen === 'view-baseline'), '기준선 재측정 화면으로 안내해야 함');
+});
+
+test('Issue ID는 중복되지 않는다', () => {
+  const ids = listIssues().map((e) => e.id);
+  assert.strictEqual(new Set(ids).size, ids.length);
 });
 
 // ============================================================

@@ -14,6 +14,7 @@ const { analyzeMemoryConfig } = require('./memoryConfig');
 const { analyzeConfiguration, STATUS: CONFIG_STATUS } = require('./overclock');
 const { RESULT, RESULT_LABEL, deriveResult, summarizeResults } = require('./resultStatus');
 const { resolveProfile, profileSkips } = require('./profiles');
+const { knowledge, wizardFor } = require('./issueDb');
 
 // 진단 신뢰도의 어휘. 숫자만으로는 "무엇을 근거로 이 정도 확신을 하는가"가 드러나지 않는다.
 //   CONFIRMED          실제 오류/사실이 측정으로 확인됨
@@ -44,6 +45,16 @@ function issueFromFinding(f) {
   issue.ruleVersion = f.ruleVersion;   // 판정 로직이 바뀌어도 과거 결과를 설명할 수 있게 (§60)
   issue.confidenceLevel = f.confidence; // §11 어휘
   issue.actionDetails = details;        // §14 조치별 위험도
+  attachWizard(issue);                  // §44 단계별 해결 절차
+  return issue;
+}
+
+// 문제 해결 Wizard를 이슈에 붙인다 (기획서 §44).
+// 지식 DB에 절차가 있는 문제만 붙는다 — 없는 문제에 억지로 만들어 붙이지 않는다.
+function attachWizard(issue) {
+  if (!issue.ruleId) return issue;
+  const w = wizardFor(issue.ruleId);
+  if (w) issue.wizard = w;
   return issue;
 }
 
@@ -408,30 +419,18 @@ function baselineFindings(comparison, section) {
     if (comparison.stale) ev.push(`기준선이 ${comparison.ageDays}일 전 값이라 그동안 실내 온도가 달라졌을 수 있습니다 — 판단 근거를 약하게 봅니다`);
     if (d.level === 'watch') ev.push('실내 온도 변화만으로도 설명될 수 있는 범위 — 단정하지 않고 지켜봅니다');
 
-    if (isTemp) {
-      issues.push(mkIssue(d.level, `${d.label}가 평소보다 높습니다`,
-        `이 PC의 평소 ${d.label}는 ${d.baselineVal}${d.unit}였는데 지금은 ${d.currentVal}${d.unit}로 ${d.diff}${d.unit} 높습니다. 절대 온도로는 아직 위험 범위가 아니지만, 같은 PC의 평소와 달라졌다는 점이 냉각 성능 저하의 신호일 수 있습니다.`,
-        [
-          '기준선 측정 때보다 실내 온도가 높음(계절·냉방 여부)',
-          '직전까지 고부하 작업을 해서 잔열이 남아 있음',
-          '방열판·팬에 먼지가 쌓여 냉각 성능이 떨어짐',
-          '서멀 그리스 열화 또는 쿨러 장착 상태 변화',
-        ],
-        [
-          '몇 분간 아무 작업도 하지 않은 뒤 다시 진단해 잔열 영향을 배제하세요',
-          '케이스를 열어 방열판·팬 먼지를 제거한 뒤 다시 진단하세요',
-          '실내 온도가 기준선 측정 때와 크게 다르다면 기준선을 다시 측정하세요',
-        ],
-        confidence, ev,
-        '먼지 제거 후 PC를 몇 분 유휴 상태로 둔 다음 전체 진단을 다시 실행해 평소 대비 차이가 줄었는지 확인하세요.'));
-    } else {
-      issues.push(mkIssue(d.level, `${d.label}이 평소보다 높습니다`,
-        `이 PC의 평소 ${d.label}은 ${d.baselineVal}${d.unit}였는데 지금은 ${d.currentVal}${d.unit}입니다. 같은 유휴 상태인데도 ${d.diff}${d.unit} 더 쓰고 있습니다.`,
-        ['시작 프로그램·백그라운드 상주 프로그램이 늘어남', '메모리를 반환하지 않는 프로그램이 실행 중', '기준선 측정 이후 설치한 프로그램의 상주 서비스'],
-        ['작업 관리자 → 시작 프로그램에서 불필요한 항목 비활성화', '메모리 점유가 큰 상주 프로그램 확인 후 종료', '정리 후 기준선을 다시 측정해 새 평소 상태를 기록'],
-        confidence, ev,
-        '상주 프로그램을 정리하고 재부팅한 뒤 전체 진단을 다시 실행해 유휴 사용률이 기준선에 가까워졌는지 확인하세요.'));
-    }
+    // 원인·조치·재검사·Wizard는 지식 DB에서 가져온다. 여기서는 측정값이 들어간 문장만 만든다.
+    const kb = knowledge(isTemp ? 'BASELINE-IDLE-TEMP-RISE' : 'BASELINE-IDLE-MEMORY-RISE');
+    const explanation = isTemp
+      ? `이 PC의 평소 ${d.label}는 ${d.baselineVal}${d.unit}였는데 지금은 ${d.currentVal}${d.unit}로 ${d.diff}${d.unit} 높습니다. 절대 온도로는 아직 위험 범위가 아니지만, 같은 PC의 평소와 달라졌다는 점이 냉각 성능 저하의 신호일 수 있습니다.`
+      : `이 PC의 평소 ${d.label}은 ${d.baselineVal}${d.unit}였는데 지금은 ${d.currentVal}${d.unit}입니다. 같은 유휴 상태인데도 ${d.diff}${d.unit} 더 쓰고 있습니다.`;
+    const issue = mkIssue(d.level, `${d.label}${isTemp ? '가' : '이'} 평소보다 높습니다`,
+      explanation, kb.causes, kb.actions.map((a) => a.text), confidence, ev, kb.verification);
+    issue.ruleId = kb.id;
+    issue.ruleVersion = kb.version;
+    issue.actionDetails = kb.actions;
+    attachWizard(issue);
+    issues.push(issue);
   });
 
   if (comparison.gpuNote && section === 'GPU') evidence.push(comparison.gpuNote);
@@ -1129,10 +1128,12 @@ function applyConfigStabilityCorrelation(sections, configState) {
      ...errorEvents.flatMap((e) => e.evidence.slice(0, 1)),
      '두 사실이 함께 관측됐다는 것까지가 확인된 내용입니다 — 인과관계는 확인되지 않았습니다'],
     '설정을 기본값으로 되돌린 뒤 며칠 사용하고 전체 진단을 다시 실행해 오류 이벤트가 늘지 않는지 확인하세요.');
-  issue.ruleId = 'CONFIG_STABILITY_INVESTIGATION';
-  issue.ruleVersion = configState.rulesetVersion;
+  const kb = knowledge('CONFIG-STABILITY-INVESTIGATION');
+  issue.ruleId = kb.id;
+  issue.ruleVersion = kb.version;
   issue.confidenceLevel = 'NEEDS_VERIFICATION';
-  issue.actionDetails = issue.actions.map((text) => ({ text, risk: 'SAFE' }));
+  issue.actionDetails = kb.actions;
+  attachWizard(issue);
 
   eventsSection.issues.push(issue);
   if (eventsSection.status === 'normal') {
