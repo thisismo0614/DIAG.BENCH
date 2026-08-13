@@ -13,6 +13,66 @@
 
 ---
 
+## English summary
+
+**DIAG.BENCH is an open-source hardware and system diagnostics tool for Windows PCs.**
+It inspects CPU, GPU, RAM, storage, network, display and driver state in a single run, and
+bundles individual checks for mouse, keyboard, monitor and internet connectivity.
+
+> The user interface, reports and documentation are currently Korean-only.
+> Internationalization is in progress.
+
+**What it does**
+
+- Reads hardware and OS state through Windows APIs (WMI/CIM), the `systeminformation`
+  library, and `smartctl` for storage SMART attributes.
+- Applies threshold and correlation **rules** (`src/engine/rules.js`) — not a machine-learning
+  model — and shows the evidence each verdict was based on.
+- Runs optional stress tests (CPU, RAM, storage, GPU) that the user starts explicitly.
+- Issues an inspection report (HTML/PDF) carrying a SHA-256 verification hash, intended for
+  used-PC sales and repair-shop hand-offs. Anyone can re-check a report at
+  [/verify.html](https://thisismo0614.github.io/DIAG.BENCH/verify.html) — the file is hashed
+  in the browser and never uploaded.
+
+**Core principle:** never call something healthy that was not tested. When a result cannot be
+determined it is reported as "not determined", and observed facts are kept separate from
+inferred causes.
+
+**Privacy — nothing leaves the machine**
+
+- No account, no telemetry, no analytics, no crash reporting. Diagnostic results are never
+  transmitted.
+- The only outbound traffic is the **internet speed test**, and only when the user starts it.
+- Hardware serial numbers are read locally to identify the machine in a report, and are
+  masked in shared documents.
+
+**It does not modify your system.** The app only reads state — no registry, service, power
+plan or boot configuration changes. `powercfg /batteryreport` is invoked to write a battery
+report to a temporary file, which is parsed and then deleted
+(`src/engine/collectors.js`).
+
+**Third-party binaries**
+
+`resources/smartmontools/smartctl.exe` (GPL v2, unmodified upstream Windows build) is bundled
+to read SMART data. DIAG.BENCH executes it as a separate process and parses its output; no GPL
+code is linked into the application. The corresponding source tarball is attached to every
+release with its checksum verified during the build — see
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md), which also records the bundled binary's
+own SHA-256.
+
+**Build and release**
+
+Installers are built by GitHub Actions from a version tag
+([`.github/workflows/release.yml`](.github/workflows/release.yml)), never uploaded from a
+developer machine, and the regression suite must pass first. Code signing runs on the CI
+artifact: if signing is configured but fails, **no release is produced**; if signing is not
+configured, the release is explicitly labelled unsigned. The NSIS installer includes an
+uninstaller.
+
+License: MIT — see [LICENSE](LICENSE).
+
+---
+
 Windows PC의 CPU / GPU / RAM / 저장장치 / 네트워크 / 디스플레이 / 드라이버 상태를
 한 번에 진단하고, 마우스·키보드·모니터·인터넷 개별 테스트까지 한 앱에 통합했습니다.
 

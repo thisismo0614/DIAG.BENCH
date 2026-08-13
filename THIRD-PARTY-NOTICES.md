@@ -34,7 +34,12 @@ GPL v2 바이너리를 배포할 때는 다음 중 하나를 반드시 함께 �
 
 | 항목 | 값 |
 |---|---|
-| 동봉 바이너리 | smartctl 7.5 2025-04-30 r5714 (x86_64-w64-mingw32-w10-22H2) |
+| 동봉 바이너리 | `resources/smartmontools/smartctl.exe` (1,165,312 바이트) |
+| 버전 배너 | `smartctl 7.5 2025-04-30 r5714 [x86_64-w64-mingw32-w10-22H2] (AppVeyor)` |
+| **바이너리 SHA-256** | `b5db94e5082c042be44994b7a4fa8f7b5c8e713b2ab1c9a560d8f7a7995ea27d` |
+| 상위 배포판 | `smartmontools-7.5.win32-setup.exe` (공식 Windows 패키지) |
+| 상위 배포판 MD5 | `bb1e199ad6a3db3e1c27ae54b835cbd5` (SourceForge 게시 `.md5`) |
+| 수정 여부 | **없음** — 상위 빌드를 그대로 동봉 |
 | 대응 소스 | `smartmontools-7.5.tar.gz` — **각 릴리스에 함께 업로드됨** |
 | 소스 SHA-256 | `690b83ca331378da9ea0d9d61008c4b22dde391387b9bbad7f29387f2595f76e` |
 | 공식 소스 저장소 | https://www.smartmontools.org/browser |
@@ -44,6 +49,25 @@ GPL v2 바이너리를 배포할 때는 다음 중 하나를 반드시 함께 �
 소스 tarball은 릴리스 시점에 SourceForge에서 내려받되, **gzip 매직 바이트와 위 SHA-256을
 검증**합니다. 하나라도 어긋나면 릴리스를 만들지 않습니다(`.github/workflows/release.yml`).
 
+### 동봉 바이너리를 직접 검증하는 방법
+
+이 저장소에는 빌드된 실행 파일이 커밋되어 있습니다. 그것이 정말 상위 배포판에서 온 것인지
+확인하려면:
+
+```
+# 1. 저장소의 바이너리 해시
+certutil -hashfile resources\smartmontools\smartctl.exe SHA256
+
+# 2. 공식 Windows 패키지를 받아 위 MD5와 대조한 뒤, 7-Zip으로 풀어
+#    bin\smartctl.exe의 SHA-256이 1번과 같은지 확인
+```
+
+> ⚠ **아직 검증되지 않은 부분**: 위 1번과 2번의 바이트 일치는 **이 저장소의 CI가 자동으로
+> 확인하지 않습니다.** 표의 SHA-256과 MD5는 각각 실측·공식 게시값이지만, 둘을 이어주는
+> 압축 해제 대조는 사람이 위 절차로 해야 합니다. 상위 배포판이 NSIS 설치 파일이라
+> 추출기가 필요하고, 그것을 릴리스 워크플로에 넣으면 서명 파이프라인을 건드리게 되어
+> 미뤄두었습니다.
+
 ### ⚠ smartctl.exe를 새 버전으로 교체할 때 반드시 함께 바꿔야 하는 것
 
 바이너리만 바꾸고 소스를 그대로 두면 **GPL 요건을 위반**하게 됩니다(대응하지 않는 소스를 제공).
@@ -51,7 +75,8 @@ GPL v2 바이너리를 배포할 때는 다음 중 하나를 반드시 함께 �
 1. `resources/smartmontools/smartctl.exe` 교체
 2. `resources/smartmontools/COPYING.txt`가 새 버전 것과 같은지 확인
 3. `.github/workflows/release.yml`의 `$ver`와 `$expected`(체크섬)를 새 버전 값으로 수정
-4. 이 문서의 표(동봉 바이너리 / 대응 소스 / SHA-256)를 수정
+4. 이 문서의 표를 **전부** 수정 — 버전 배너, **바이너리 SHA-256**, 상위 배포판 이름과 MD5,
+   대응 소스 이름과 SHA-256. 바이너리 해시를 옛날 값으로 두면 검증하려는 사람을 헛돌게 한다
 
 > ⚠ **이 문서는 법률 자문이 아닙니다.** 위 조치는 GPL v2 §3(a)에 대응하는 기술적 조치이지만,
 > 상업적 배포를 하거나 배포 규모가 커진다면 법률 전문가에게 확인하시기 바랍니다.
