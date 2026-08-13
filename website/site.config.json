@@ -18,6 +18,20 @@
   "productName": "DIAG.BENCH",
   "tagline": "Windows PC 하드웨어·시스템 진단",
   "description": "CPU·GPU·메모리·저장장치·네트워크 상태를 측정하고, 근거와 함께 원인 후보를 제시하는 Windows 진단 도구입니다. 확인하지 않은 것은 정상이라고 말하지 않습니다.",
+
+  "$comment_i18n": [
+    "tagline과 description은 페이지 안에 그대로 실린다(og:image:alt, 구조화 데이터의",
+    "description, 푸터). 언어별 판이 없으면 영어 페이지에 한국어 문장이 실린다 —",
+    "실제로 그렇게 나가던 것을 검사에서 잡았다. 위의 값은 원문 언어(ko)가 쓴다."
+  ],
+  "localized": {
+    "en": {
+      "tagline": "Hardware and system diagnostics for Windows PCs",
+      "description": "A Windows diagnostic tool that measures CPU, GPU, memory, storage and network state, and presents candidate causes alongside the evidence. It never calls something healthy that was not tested.",
+      "minWindows": "Windows 10 (x64) or later"
+    }
+  },
+
   "owner": "thisismo0614",
   "repo": "DIAG.BENCH",
   "siteUrl": "https://thisismo0614.github.io/DIAG.BENCH",

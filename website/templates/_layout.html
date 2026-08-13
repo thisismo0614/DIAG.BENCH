@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ko">
+<html lang="{{HTML_LANG}}">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -12,7 +12,8 @@
 <meta property="og:title" content="{{PAGE_TITLE}}">
 <meta property="og:description" content="{{PAGE_DESC}}">
 <meta property="og:url" content="{{CANONICAL}}">
-<meta property="og:locale" content="ko_KR">
+<meta property="og:locale" content="{{OG_LOCALE}}">
+{{HREFLANG}}
 <meta property="og:image" content="{{SITE_URL}}/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
@@ -22,12 +23,12 @@
 <meta name="twitter:description" content="{{PAGE_DESC}}">
 <meta name="twitter:image" content="{{SITE_URL}}/og.png">
 
-<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="icon" href="{{ASSET}}favicon.svg" type="image/svg+xml">
 <!-- 글꼴은 CSS를 받아서 파싱한 뒤에야 발견된다. 미리 알려주면 그만큼 일찍 시작해
      본문이 맑은 고딕으로 보였다가 바뀌는 구간이 짧아진다.
      crossorigin은 같은 출처라도 필수다 — 없으면 브라우저가 따로 한 번 더 받는다. -->
-<link rel="preload" href="fonts/diagbench-sans.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="styles.css">
+<link rel="preload" href="{{ASSET}}fonts/diagbench-sans.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="{{ASSET}}styles.css">
 
 <script type="application/ld+json">
 {
@@ -40,7 +41,7 @@
   "url": "{{SITE_URL}}",
   "downloadUrl": "{{DOWNLOAD_URL}}",
   "softwareVersion": "{{VERSION}}",
-  "inLanguage": "ko",
+  "inLanguage": "{{HTML_LANG}}",
   "license": "https://opensource.org/licenses/MIT",
   "isAccessibleForFree": true,
   "offers": { "@type": "Offer", "price": "0", "priceCurrency": "KRW" }
@@ -51,83 +52,15 @@
 </head>
 <body>
 
-<a class="skip-link" href="#main">본문으로 건너뛰기</a>
+<a class="skip-link" href="#main">{{SKIP_LINK}}</a>
 
-<header class="site-header">
-  <nav class="nav" aria-label="주요 메뉴">
-    <a class="brand" href="index.html">
-      <span class="brand-mark" aria-hidden="true"></span>
-      <span class="brand-name">{{PRODUCT_NAME}}</span>
-    </a>
-    <ul class="nav-links">
-      <li><a href="guides.html">문제 해결</a></li>
-      <li><a href="learn.html">기술 해설</a></li>
-      <li><a href="user-guide.html">사용법</a></li>
-      <li><a href="download.html">다운로드</a></li>
-      <li><a href="faq.html">FAQ</a></li>
-      <li><a href="{{REPO_URL}}" rel="noopener">GitHub</a></li>
-    </ul>
-  </nav>
-</header>
+{{HEADER}}
 
 <main id="main">
 {{CONTENT}}
 </main>
 
-<footer class="site-footer">
-  <div class="footer-inner">
-    <div class="footer-brand">
-      <span class="brand-name">{{PRODUCT_NAME}}</span>
-      <p class="footer-tagline">{{TAGLINE}}</p>
-    </div>
-    <nav class="footer-cols" aria-label="푸터 메뉴">
-      <div>
-        <h2>제품</h2>
-        <ul>
-          <li><a href="download.html">다운로드</a></li>
-          <li><a href="index.html#features">기능</a></li>
-          <li><a href="faq.html">FAQ</a></li>
-        </ul>
-      </div>
-      <div>
-        <h2>알아보기</h2>
-        <ul>
-          <li><a href="guides.html">문제 해결 가이드</a></li>
-          <li><a href="learn.html">기술 해설</a></li>
-          <li><a href="user-guide.html">사용 설명서</a></li>
-          <li><a href="technical.html">기술 문서</a></li>
-        </ul>
-      </div>
-      <div>
-        <h2>활용</h2>
-        <ul>
-          <li><a href="use-used-pc.html">중고 PC 점검</a></li>
-          <li><a href="use-repair-shop.html">수리점 입출고</a></li>
-          <li><a href="use-pre-delivery.html">조립 PC 출고 검사</a></li>
-          <li><a href="verify.html">받은 리포트 검증</a></li>
-        </ul>
-      </div>
-      <div>
-        <h2>프로젝트</h2>
-        <ul>
-          <li><a href="{{REPO_URL}}" rel="noopener">소스 코드</a></li>
-          <li><a href="{{RELEASES_URL}}" rel="noopener">릴리스</a></li>
-          <li><a href="{{ISSUES_URL}}" rel="noopener">버그 신고</a></li>
-          <li><a href="{{README_URL}}" rel="noopener">문서</a></li>
-        </ul>
-      </div>
-      <div>
-        <h2>라이선스 · 방침</h2>
-        <ul>
-          <li><a href="{{LICENSE_URL}}" rel="noopener">MIT License</a></li>
-          <li><a href="{{THIRD_PARTY_URL}}" rel="noopener">서드파티 고지</a></li>
-          <li><a href="privacy.html">개인정보처리방침</a></li>
-        </ul>
-      </div>
-    </nav>
-  </div>
-  <p class="copyright">© {{YEAR}} {{PRODUCT_NAME}} · 오픈소스 (MIT)</p>
-</footer>
+{{FOOTER}}
 
 </body>
 </html>

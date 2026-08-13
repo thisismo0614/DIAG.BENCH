@@ -167,6 +167,23 @@ pre code { background: none; border: none; padding: 0; }
 .nav-links a { color: var(--text-dim); text-decoration: none; font-size: 14.5px; }
 .nav-links a:hover { color: var(--text); }
 
+/* 언어 전환. 메뉴가 아니라 "다른 판으로 가는 문"이라 시각적으로 떼어 놓는다.
+   문구는 가려는 언어로 적히므로(English / 한국어) 글꼴이 섞인다 — 크기를 같게 맞춘다. */
+.nav-langs {
+  display: flex; gap: 12px; list-style: none; margin: 0 0 0 18px; padding: 0 0 0 18px;
+  border-left: 1px solid var(--border);
+}
+.nav-langs a { color: var(--text-faint); text-decoration: none; font-size: 14.5px; }
+.nav-langs a:hover { color: var(--accent); }
+
+@media (max-width: 640px) {
+  /* 세로로 접히면 왼쪽 경계선이 어색해진다 — 위쪽 경계로 바꾼다. */
+  .nav-langs {
+    margin: 0; padding: 8px 0 0; border-left: 0; border-top: 1px solid var(--border);
+    width: 100%;
+  }
+}
+
 @media (max-width: 640px) {
   .nav { height: auto; padding: 12px 20px; flex-direction: column; align-items: flex-start; gap: 10px; }
   .nav-links { gap: 16px; flex-wrap: wrap; }
@@ -302,6 +319,15 @@ section h2 { font-size: clamp(22px, 3vw, 30px); margin: 0 0 12px; }
 .footer-cols li { margin-bottom: 7px; }
 .footer-cols a { color: var(--text-dim); text-decoration: none; font-size: 14px; }
 .footer-cols a:hover { color: var(--accent); }
+/* 아직 번역되지 않은 영역이 있다는 안내. 숨기지 않고 푸터에 상시 적는다 —
+   "영어판이 있다"고 해놓고 절반이 한국어면 독자의 시간을 버리게 한다. */
+.footer-partial {
+  max-width: var(--wrap); margin: 28px auto 0; padding: 14px 24px 0;
+  border-top: 1px solid var(--border); color: var(--text-faint);
+  font-size: 13.5px; line-height: 1.6;
+}
+.footer-partial + .copyright { margin-top: 16px; border-top: 0; }
+
 .copyright {
   max-width: var(--wrap); margin: 36px auto 0; padding: 20px 24px 0;
   border-top: 1px solid var(--border); color: var(--text-faint); font-size: 13px;

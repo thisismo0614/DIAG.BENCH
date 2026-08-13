@@ -18,10 +18,69 @@ const path = require('path');
 // issueDb.js는 의존성이 없는 순수 모듈이라 npm install 없이 require할 수 있다 —
 // website.yml은 `node build.js`만 실행하므로 이 성질이 유지되어야 한다.
 const issueDb = require('../src/engine/issueDb');
+const { SOURCE_LOCALE } = require('../src/i18n');
 const guideSeo = require('./content/guide-seo');
 const learnArticles = require('./content/learn');
 const md = require('./lib/markdown');
 const { renderGuide, slugFor } = require('./lib/guides');
+
+// ---------- 언어 ----------
+// dir이 빈 문자열인 언어가 사이트 뿌리를 차지한다. 한국어 페이지는 이미 색인돼 있으므로
+// **주소를 옮기지 않는다** — /guide-x.html 은 그대로 두고 영어는 /en/guide-x.html 로 간다.
+const LOCALES = [
+  { code: 'ko', dir: '' },
+  { code: 'en', dir: 'en' },
+];
+const STRINGS = {
+  ko: require('./content/strings/ko'),
+  en: require('./content/strings/en'),
+};
+const GUIDE_SEO = {
+  ko: guideSeo,
+  en: require('./content/guide-seo.en'),
+};
+
+// 푸터 구성. 언어별로 "그 언어에 실제로 있는 페이지"만 남긴다.
+// 외부 링크(url)는 언어와 무관하므로 항상 남는다.
+const FOOTER_COLS = [
+  { key: 'product', items: [
+    { k: 'download', file: 'download.html' },
+    { k: 'features', file: 'index.html', hash: '#features' },
+    { k: 'faq', file: 'faq.html' },
+  ] },
+  { key: 'learn', items: [
+    { k: 'guides', file: 'guides.html' },
+    { k: 'learnHub', file: 'learn.html' },
+    { k: 'userGuide', file: 'user-guide.html' },
+    { k: 'technical', file: 'technical.html' },
+  ] },
+  { key: 'useCases', items: [
+    { k: 'usedPc', file: 'use-used-pc.html' },
+    { k: 'repairShop', file: 'use-repair-shop.html' },
+    { k: 'preDelivery', file: 'use-pre-delivery.html' },
+    { k: 'verify', file: 'verify.html' },
+  ] },
+  { key: 'project', items: [
+    { k: 'source', url: '{{REPO_URL}}' },
+    { k: 'releases', url: '{{RELEASES_URL}}' },
+    { k: 'issues', url: '{{ISSUES_URL}}' },
+    { k: 'docs', url: '{{README_URL}}' },
+  ] },
+  { key: 'legal', items: [
+    { k: 'license', url: '{{LICENSE_URL}}' },
+    { k: 'thirdParty', url: '{{THIRD_PARTY_URL}}' },
+    { k: 'privacy', file: 'privacy.html' },
+  ] },
+];
+
+// 헤더 메뉴도 같은 규칙을 따른다.
+const NAV_ITEMS = [
+  { k: 'guides', file: 'guides.html' },
+  { k: 'learn', file: 'learn.html' },
+  { k: 'userGuide', file: 'user-guide.html' },
+  { k: 'download', file: 'download.html' },
+  { k: 'faq', file: 'faq.html' },
+];
 
 const ROOT = __dirname;
 const OUT = path.join(ROOT, 'dist');
@@ -186,6 +245,155 @@ function esc(s) {
   // 사이트맵에 들어갈 목록. priority는 "사이트 안에서 얼마나 중심인 페이지인가"를 나타낸다.
   const sitemap = [];
 
+  // ---------- 언어별로 "실제로 존재할 페이지" 목록을 먼저 확정한다 ----------
+  //
+  // hreflang을 붙이려면 페이지를 쓰기 **전에** 다른 언어에 짝이 있는지 알아야 한다.
+  // 그리고 메뉴는 그 언어에 없는 페이지를 가리키면 안 된다 — 영어 메뉴를 눌렀는데
+  // 한국어 페이지가 나오면 독자의 클릭을 버리는 것이다.
+  const guidesByLocale = {};
+  for (const loc of LOCALES) {
+    guidesByLocale[loc.code] = issueDb.listIssues(loc.code)
+      // ⚠ 번역되지 않은 항목은 그 언어로 내보내지 않는다. /en/ 주소에서 한국어 본문이
+      //    나오면 검색엔진과 독자 모두에게 "영어판이 있다"고 거짓말하는 셈이다.
+      .filter((it) => it.translated)
+      .map((it) => {
+        const ko = GUIDE_SEO[SOURCE_LOCALE][it.id] || {};
+        // slug(파일명)는 언제나 원문 것을 쓴다 — hreflang이 URL로 짝을 짓기 때문이다.
+        const seo = loc.code === SOURCE_LOCALE
+          ? ko
+          : { slug: ko.slug, ...(GUIDE_SEO[loc.code][it.id] || {}) };
+        return { issue: it, seo, file: slugFor(it.id, seo) };
+      });
+  }
+
+  const pagesOf = {};
+  for (const loc of LOCALES) {
+    const guideFiles = guidesByLocale[loc.code].map((g) => g.file);
+    pagesOf[loc.code] = new Set(loc.code === SOURCE_LOCALE
+      // 원문 언어: 손으로 쓴 템플릿 전부 + 생성되는 허브·문서 페이지
+      ? [...pages, 'guides.html', 'learn.html', 'user-guide.html', 'technical.html', ...guideFiles]
+      // 그 외 언어: 지금은 가이드와 그 허브만 번역돼 있다
+      : ['guides.html', ...guideFiles]);
+  }
+
+  // 태그라인·설명은 페이지 안에 그대로 실린다(og:image:alt, 구조화 데이터, 푸터).
+  // 언어별 판이 없으면 영어 페이지에 한국어 문장이 실린다 — 검사에서 실제로 잡혔다.
+  const cfgOf = (loc) => ({
+    tagline: cfg.tagline,
+    description: cfg.description,
+    minWindows: cfg.minWindows,
+    ...((cfg.localized || {})[loc.code] || {}),
+  });
+
+  // 릴리스 API에서 온 값을 언어별 문장으로 만든다. 다운로드 버튼은 영어 가이드 페이지
+  // 맨 아래에도 실리므로, 여기가 언어를 안 따라가면 영어 페이지에 한국어 버튼이 나간다.
+  const releaseVars = (loc) => {
+    const d = STRINGS[loc.code].download;
+    return {
+      DOWNLOAD_LABEL: d.label,
+      DOWNLOAD_SUB: hasRelease
+        ? d.sub(esc(rel.version), rel.sizeMB, rel.prerelease)
+        : d.subNoRelease,
+      VERSION_LINE: hasRelease
+        ? d.versionLine(esc(rel.version), d.formatDate(new Date(rel.publishedAt)), rel.prerelease)
+        : d.versionLineNoRelease,
+      MIN_WINDOWS: cfgOf(loc).minWindows,
+    };
+  };
+
+  const baseUrlOf = (loc) => (loc.dir ? `${siteUrl}/${loc.dir}` : siteUrl);
+  const absUrl = (loc, file) => (file === 'index.html' ? `${baseUrlOf(loc)}/` : `${baseUrlOf(loc)}/${file}`);
+  // 그 언어의 첫 화면. 영어에는 index.html이 없으므로 가이드 허브가 그 역할을 한다.
+  const homeOf = (loc) => (pagesOf[loc.code].has('index.html') ? 'index.html' : 'guides.html');
+
+  // 같은 내용의 다른 언어 페이지를 검색엔진에 알린다.
+  // 짝이 하나뿐이면 hreflang은 의미가 없으므로 붙이지 않는다.
+  function hreflangFor(file) {
+    const available = LOCALES.filter((l) => pagesOf[l.code].has(file));
+    if (available.length < 2) return '';
+    const links = available.map((l) => `<link rel="alternate" hreflang="${l.code}" href="${absUrl(l, file)}">`);
+    // x-default는 원문 언어로 보낸다 — 어느 언어도 맞지 않는 방문자에게 보여줄 판.
+    const def = available.find((l) => l.code === SOURCE_LOCALE) || available[0];
+    links.push(`<link rel="alternate" hreflang="x-default" href="${absUrl(def, file)}">`);
+    return links.join('\n');
+  }
+
+  // 다른 언어의 같은 페이지로 가는 상대 경로. 짝이 없으면 그 언어의 첫 화면으로 보낸다.
+  function crossLocaleHref(from, to, file) {
+    const target = pagesOf[to.code].has(file) ? file : homeOf(to);
+    if (from.dir && !to.dir) return `../${target}`;
+    if (!from.dir && to.dir) return `${to.dir}/${target}`;
+    return target;
+  }
+
+  function languageNav(loc, file) {
+    const others = LOCALES.filter((l) => l.code !== loc.code);
+    if (!others.length) return '';
+    const t = STRINGS[loc.code];
+    const links = others.map((l) => {
+      // 링크 문구는 **가려는 언어로** 적는다. 한국어를 못 읽는 사람이 "영어"라고
+      // 쓰인 항목을 고를 수는 없다.
+      const name = STRINGS[l.code].languageName;
+      return `<li><a href="${crossLocaleHref(loc, l, file)}" hreflang="${l.code}" lang="${l.code}">${name}</a></li>`;
+    });
+    return `\n    <ul class="nav-langs" aria-label="${esc(t.languageNavLabel)}">${links.join('')}</ul>`;
+  }
+
+  function headerHtml(loc, file) {
+    const t = STRINGS[loc.code];
+    const items = NAV_ITEMS
+      .filter((it) => pagesOf[loc.code].has(it.file))
+      .map((it) => `\n      <li><a href="${it.file}">${t.nav[it.k]}</a></li>`)
+      .join('');
+    return `<header class="site-header">
+  <nav class="nav" aria-label="${esc(t.navLabel)}">
+    <a class="brand" href="${homeOf(loc)}">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-name">{{PRODUCT_NAME}}</span>
+    </a>
+    <ul class="nav-links">${items}
+      <li><a href="{{REPO_URL}}" rel="noopener">${t.nav.github}</a></li>
+    </ul>${languageNav(loc, file)}
+  </nav>
+</header>`;
+  }
+
+  function footerHtml(loc) {
+    const t = STRINGS[loc.code];
+    const cols = FOOTER_COLS.map((col) => {
+      const items = col.items.filter((it) => it.url || pagesOf[loc.code].has(it.file));
+      if (!items.length) return '';   // 그 언어에 하나도 없는 열은 통째로 빼낸다
+      const lis = items.map((it) => {
+        const href = it.url || `${it.file}${it.hash || ''}`;
+        const rel = it.url ? ' rel="noopener"' : '';
+        return `\n          <li><a href="${href}"${rel}>${t.footer.items[it.k]}</a></li>`;
+      }).join('');
+      return `
+      <div>
+        <h2>${t.footer[col.key]}</h2>
+        <ul>${lis}
+        </ul>
+      </div>`;
+    }).filter(Boolean).join('');
+
+    // 아직 그 언어로 번역되지 않은 영역이 있으면 숨기지 않고 적는다.
+    const partial = t.partialNotice
+      ? `\n  <p class="footer-partial">${t.partialNotice}</p>`
+      : '';
+
+    return `<footer class="site-footer">
+  <div class="footer-inner">
+    <div class="footer-brand">
+      <span class="brand-name">{{PRODUCT_NAME}}</span>
+      <p class="footer-tagline">{{TAGLINE}}</p>
+    </div>
+    <nav class="footer-cols" aria-label="${esc(t.footerNavLabel)}">${cols}
+    </nav>
+  </div>${partial}
+  <p class="copyright">${t.copyright(vars.YEAR, cfg.productName)}</p>
+</footer>`;
+  }
+
   /**
    * 페이지 하나를 레이아웃에 끼워 dist에 쓴다.
    * 템플릿에서 온 것이든 생성된 것이든 이 함수를 지나게 해서, 헤더·구조화 데이터·치환 검사가
@@ -196,16 +404,19 @@ function esc(s) {
    *    치환 함수를 쓰는 것도 같은 이유다 — 문자열을 그대로 넘기면 본문의 `$&`, `$1`이
    *    특수 문자로 해석되어 내용이 조용히 망가진다.
    */
-  const emit = (file, opts) => {
+  const emit = (file, opts, loc = LOCALES[0]) => {
     const { title, desc, body, jsonld = [], ogType = 'website', priority = 0.6, index = true } = opts;
-    const pageUrl = file === 'index.html' ? `${siteUrl}/` : `${siteUrl}/${file}`;
+    const t = STRINGS[loc.code];
+    const pageUrl = absUrl(loc, file);
     const ld = jsonld
       .map((o) => `<script type="application/ld+json">\n${JSON.stringify(o, null, 2)}\n</script>`)
       .join('\n');
 
     const withBody = layout
       .replace('{{CONTENT}}', () => body)
-      .replace('{{PAGE_JSONLD}}', () => ld);
+      .replace('{{PAGE_JSONLD}}', () => ld)
+      .replace('{{HEADER}}', () => headerHtml(loc, file))
+      .replace('{{FOOTER}}', () => footerHtml(loc));
 
     // ⚠ 제목·설명은 반드시 이스케이프한다. 이 값들은 content="…" 속성 안에 들어가므로,
     //    큰따옴표가 하나라도 있으면 거기서 속성이 끝나버려 설명이 잘린 채 배포된다.
@@ -216,6 +427,18 @@ function esc(s) {
       PAGE_DESC: esc(desc),
       CANONICAL: pageUrl,
       OG_TYPE: ogType,
+      HTML_LANG: t.htmlLang,
+      OG_LOCALE: t.ogLocale,
+      SKIP_LINK: esc(t.skipLink),
+      TAGLINE: cfgOf(loc).tagline,
+      DESCRIPTION: cfgOf(loc).description,
+      ...releaseVars(loc),
+      HREFLANG: hreflangFor(file),
+      // 하위 폴더의 페이지는 뿌리에 있는 정적 파일을 ../로 가리켜야 한다.
+      // (styles.css·글꼴·favicon은 언어마다 복사하지 않는다 — 같은 파일이다)
+      ASSET: loc.dir ? '../' : '',
+      // 구조화 데이터의 절대 주소. 언어별 뿌리를 가리켜야 빵부스러기가 제 언어로 이어진다.
+      PAGE_BASE: baseUrlOf(loc),
     });
 
     // 치환되지 않고 남은 변수가 있으면 조용히 배포하지 않고 즉시 실패시킨다.
@@ -223,9 +446,18 @@ function esc(s) {
     if (leftover.length) {
       throw new Error(`[build] ${file}: 치환되지 않은 템플릿 변수가 있습니다 → ${leftover.join(', ')}`);
     }
-    fs.writeFileSync(path.join(OUT, file), html, 'utf-8');
+
+    // 선언해둔 목록과 실제로 쓰는 파일이 어긋나면 메뉴·hreflang이 없는 페이지를
+    // 가리키게 된다. 조용히 넘어가면 배포 후에야 404로 발견된다.
+    if (!pagesOf[loc.code].has(file)) {
+      throw new Error(`[build] ${loc.code}/${file}: pagesOf에 없는 페이지를 쓰려고 합니다.`);
+    }
+
+    const outDir = loc.dir ? path.join(OUT, loc.dir) : OUT;
+    fs.mkdirSync(outDir, { recursive: true });
+    fs.writeFileSync(path.join(outDir, file), html, 'utf-8');
     if (index) sitemap.push({ url: pageUrl, priority });
-    console.log(`[build] ${file}`);
+    console.log(`[build] ${loc.dir ? `${loc.dir}/` : ''}${file}`);
   };
 
   // 페이지별 우선순위. 적지 않은 페이지는 기본값을 쓴다.
@@ -303,30 +535,35 @@ function esc(s) {
     }
   }
 
-  const guides = issueDb.listIssues().map((it) => renderGuide(it, guideSeo[it.id] || {}, learnById));
-  for (const g of guides) {
-    emit(g.file, {
-      title: g.title, desc: g.desc, body: g.body, jsonld: g.jsonld,
-      ogType: 'article', priority: 0.8,
-    });
-  }
+  for (const loc of LOCALES) {
+    const t = STRINGS[loc.code];
+    // 해설 글(learn-*.html)은 아직 원문 언어에만 있다. 빈 Map을 넘기면 "더 읽어보기"가
+    // 통째로 빠진다 — 영어 독자를 한국어 페이지로 보내 클릭을 버리지 않기 위해서다.
+    const learnMap = loc.code === SOURCE_LOCALE ? learnById : new Map();
 
-  // ---------- 3. 허브 페이지 (목록을 두 번 적지 않기 위해 생성한다) ----------
-  const byCategory = new Map();
-  for (const g of guides) {
-    if (!byCategory.has(g.category)) byCategory.set(g.category, []);
-    byCategory.get(g.category).push(g);
-  }
+    const guides = guidesByLocale[loc.code]
+      .map((g) => renderGuide(g.issue, g.seo, learnMap, t, homeOf(loc)));
+    for (const g of guides) {
+      emit(g.file, {
+        title: g.title, desc: g.desc, body: g.body, jsonld: g.jsonld,
+        ogType: 'article', priority: 0.8,
+      }, loc);
+    }
 
-  const guidesBody = `
+    // ---------- 3. 허브 페이지 (목록을 두 번 적지 않기 위해 생성한다) ----------
+    const byCategory = new Map();
+    for (const g of guides) {
+      if (!byCategory.has(g.category)) byCategory.set(g.category, []);
+      byCategory.get(g.category).push(g);
+    }
+
+    const hub = t.guidesHub;
+    const guidesBody = `
 <section class="page-head">
   <div class="wrap">
-    <p class="eyebrow">문제 해결 가이드</p>
-    <h1>증상별로 원인을 좁혀 나가는 방법</h1>
-    <p class="lead">DIAG.BENCH가 실제로 판정하는 항목 ${guides.length}가지입니다.
-      각 문서는 <strong>이 문제가 맞는지 확인하는 조건</strong>, 원인 후보, 위험도를 표시한 조치,
-      그리고 되돌릴 수 있는 순서로 배열한 단계별 절차로 이루어집니다.
-      프로그램 없이 읽기만 해도 도움이 되도록 썼습니다.</p>
+    <p class="eyebrow">${md.esc(hub.eyebrow)}</p>
+    <h1>${md.esc(hub.h1)}</h1>
+    <p class="lead">${hub.lead(guides.length)}</p>
   </div>
 </section>
 
@@ -346,8 +583,8 @@ function esc(s) {
 
 <section class="final-cta">
   <div class="wrap">
-    <h2>내 PC는 어디에 해당하는지 확인해 보세요</h2>
-    <p>위 항목을 전부 자동으로 검사하고, 해당하는 것만 근거와 함께 알려줍니다.</p>
+    <h2>${md.esc(hub.ctaHeading)}</h2>
+    <p>${md.esc(hub.ctaLead)}</p>
     <div class="cta">
       <a class="btn btn-primary" href="{{DOWNLOAD_URL}}">
         <span class="btn-main">{{DOWNLOAD_LABEL}}</span>
@@ -357,20 +594,21 @@ function esc(s) {
   </div>
 </section>`;
 
-  emit('guides.html', {
-    title: '문제 해결 가이드 — DIAG.BENCH',
-    desc: `메모리 속도, 듀얼 채널, 오버클럭 흔적, 배터리 열화, 유휴 온도 상승 등 PC에서 자주 나타나는 ${guides.length}가지 문제의 원인과 단계별 해결 절차를 위험도와 함께 안내합니다.`,
-    body: guidesBody,
-    priority: 0.8,
-    jsonld: [{
-      '@context': 'https://schema.org',
-      '@type': 'ItemList',
-      name: 'DIAG.BENCH 문제 해결 가이드',
-      itemListElement: guides.map((g, i) => ({
-        '@type': 'ListItem', position: i + 1, name: g.h1, url: `${siteUrl}/${g.file}`,
-      })),
-    }],
-  });
+    emit('guides.html', {
+      title: hub.title,
+      desc: hub.desc(guides.length),
+      body: guidesBody,
+      priority: 0.8,
+      jsonld: [{
+        '@context': 'https://schema.org',
+        '@type': 'ItemList',
+        name: hub.listName,
+        itemListElement: guides.map((g, i) => ({
+          '@type': 'ListItem', position: i + 1, name: g.h1, url: absUrl(loc, g.file),
+        })),
+      }],
+    }, loc);
+  }
 
   const learnBody = `
 <section class="page-head">
