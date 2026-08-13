@@ -1047,7 +1047,21 @@ test('원인을 PSU로 단정하지 않는다', () => {
 // ============================================================
 section('SMART 속성 파싱 (실제 smartctl 출력 형식)');
 // ============================================================
-const { parseSmartAttributes, parseSmartIdentity, parseSmartHealthOutput, parseAtaSmart } = require('../src/engine/collectors');
+const { parseSmartAttributes, parseSmartIdentity, parseSmartHealthOutput, parseAtaSmart, parseBatteryReport } = require('../src/engine/collectors');
+
+// 배터리 A+ 등급 테스트용 — 통과하는 정밀 검사 결과
+const passingCpuStressForGrade = {
+  completed: true, aborted: false, abortReason: null, abortKind: null, workerError: null,
+  durationSec: 15, requestedDurationSec: 15, effectiveDurationSec: 15, coreCount: 8, workerCount: 8,
+  tempSensorAvailable: true, safetyMode: 'temperature', safetyTempC: 95,
+  startTempC: 42, maxTempC: 68, minClockGHz: 3.4, maxClockGHz: 3.6, maxLoadPercent: 99,
+  loadAchieved: true, samples: 15, clockDroppedUnderLoad: false,
+};
+const passingStorageForGrade = {
+  sizeMB: 150, writeMBps: 480, readMBps: 1200, completed: true, error: null, errorStage: null,
+  ioErrors: 0, verifyMismatch: false, bytesRead: 150 * 1024 * 1024, freeSpaceChecked: true,
+};
+const passingRamForGrade = { sizeMB: 256, errors: 0, passed: true, completed: true, error: null, patternsRun: 3, firstErrorOffset: null };
 
 // 이 개발 PC의 실제 NVMe(SK hynix Gold P31) smartctl -H -i -A 출력을 그대로 가져온 것.
 const NVME_SAMPLE = `smartctl 7.5 2025-04-30 r5714 [x86_64-w64-mingw32-w10-22H2] (AppVeyor)
@@ -1981,6 +1995,138 @@ test('프로필 없이 부른 기존 경로는 그대로 동작한다', () => {
   const r = buildReport(baseInput());
   assert.strictEqual(r.profile, null);
   assert.strictEqual(findSection(r, 'CPU').status, 'normal');
+});
+
+// ============================================================
+section('배터리 (노트북)');
+// ============================================================
+// 실측 근거: LG 노트북(Windows 10 한국어)에서 확인한 실제 값.
+//   Win32_Battery.DesignCapacity / FullChargeCapacity → 둘 다 비어 있음
+//   root\wmi BatteryStaticData → 인스턴스 없음
+//   root\wmi BatteryFullChargedCapacity → 65410
+//   root\wmi BatteryCycleCount → 173
+//   powercfg /batteryreport → DESIGN 80,000 / FULL 65,410 / CYCLE 173
+// 즉 설계 용량은 powercfg에서만 나온다.
+
+const REAL_BATTERY_REPORT = `
+<table><tr><td class="label"><span class="label">DESIGN CAPACITY</span></td><td>80,000 mWh</td></tr>
+<tr><td class="label"><span class="label">FULL CHARGE CAPACITY</span></td><td>65,410 mWh</td></tr>
+<tr><td class="label"><span class="label">CYCLE COUNT</span></td><td>173</td></tr></table>`;
+
+function battery(over = {}) {
+  return {
+    present: true, isLaptop: true, queryFailed: false, name: 'LGES-LG', chemistry: '리튬이온',
+    statusText: '전원 연결됨', statusCode: 2, chargePercent: 95, designVoltageV: 7.595,
+    designCapacityMWh: 80000, fullChargeCapacityMWh: 65410, cycleCount: 173,
+    healthPercent: 81.8, sources: { designCapacity: 'powercfg', fullCharge: 'wmi', cycleCount: 'wmi' },
+    error: null, ...over,
+  };
+}
+
+test('실제 노트북의 배터리 리포트에서 설계·완충·사이클을 읽는다', () => {
+  const r = parseBatteryReport(REAL_BATTERY_REPORT);
+  assert.strictEqual(r.designCapacityMWh, 80000, '천 단위 쉼표를 처리해야 함');
+  assert.strictEqual(r.fullChargeCapacityMWh, 65410);
+  assert.strictEqual(r.cycleCount, 173);
+});
+
+test('리포트가 없거나 항목이 없으면 지어내지 않는다', () => {
+  assert.deepStrictEqual(parseBatteryReport(null), { designCapacityMWh: null, fullChargeCapacityMWh: null, cycleCount: null });
+  assert.strictEqual(parseBatteryReport('<html>내용 없음</html>').designCapacityMWh, null);
+});
+
+test('[핵심] 데스크톱에는 배터리 섹션을 아예 만들지 않는다', () => {
+  // 배터리가 없는 기기에 "배터리 검사 안 함"이라고 하면 없는 결함을 만들어내는 셈이다.
+  const r = buildReport(baseInput({ battery: { present: false, isLaptop: false, queryFailed: false } }));
+  assert.strictEqual(findSection(r, 'BATTERY'), undefined);
+  assert.ok(!/배터리/.test(r.headline), `headline에 배터리가 나오면 안 됨: ${r.headline}`);
+});
+
+test('[핵심] 데스크톱이 배터리 때문에 A+를 잃지 않는다', () => {
+  const diag = buildReport(baseInput({
+    battery: { present: false, isLaptop: false, queryFailed: false },
+    gpu: { controllers: [{ model: 'Test GPU' }], supported: true, nvidia: { loadPercent: 5, tempC: 40, clockMHz: 1500, vramUsedMB: 500, vramTotalMB: 8192 } },
+    storage: { volumes: [{ mount: 'C:', sizeGB: 500, usedGB: 100, usePercent: 20 }], disks: [], smart: [{ device: '/dev/sda', healthy: true, type: 'nvme' }], smartctlAvailable: true, io: null },
+    eventLog: withEvents({}),
+  }));
+  const insp = buildInspectionReport(diag, { systemSerial: 'S1' }, '2026-08-13T00:00:00Z',
+    { included: true, cpuStress: passingCpuStressForGrade, storageTest: passingStorageForGrade, ramTest: passingRamForGrade }, {});
+  assert.strictEqual(insp.overallGrade.coverageComplete, true, '해당 없는 항목을 미검사로 세면 안 됨');
+  assert.ok(!insp.testScope.notTested.some((n) => n.includes('배터리')), '배터리가 검사 안 함 목록에 들어가면 안 됨');
+});
+
+test('노트북인데 배터리를 못 찾으면 그 사실을 드러낸다', () => {
+  const r = buildReport(baseInput({
+    battery: { present: false, isLaptop: true, queryFailed: false, error: '배터리를 찾지 못했습니다(분리형이거나 인식되지 않음).' },
+  }));
+  const s = findSection(r, 'BATTERY');
+  assert.ok(s, '노트북이면 섹션이 있어야 함');
+  assert.strictEqual(s.result, 'NOT_TESTED');
+});
+
+test('조회 자체가 실패하면 데스크톱이어도 드러낸다', () => {
+  const r = buildReport(baseInput({ battery: { present: false, isLaptop: false, queryFailed: true, error: '조회 실패' } }));
+  assert.strictEqual(findSection(r, 'BATTERY').result, 'NOT_TESTED');
+});
+
+test('건강한 배터리는 이상 없음이고 근거를 남긴다', () => {
+  const r = buildReport(baseInput({ battery: battery({ healthPercent: 95, fullChargeCapacityMWh: 76000 }) }));
+  const s = findSection(r, 'BATTERY');
+  assert.strictEqual(s.result, 'PASS');
+  assert.ok(s.normalEvidence.some((e) => e.includes('사이클')));
+  assert.ok(s.normalEvidence.some((e) => e.includes('설계 대비')));
+});
+
+test('[실측값] 65,410 / 80,000 = 81.8%는 기준(80%)을 넘어 이상 없음', () => {
+  // 실제 노트북 값. 80%를 넘으므로 이슈를 만들지 않는다 —
+  // 경계 근처 값을 문제로 올리면 멀쩡한 배터리에 경고가 붙는다.
+  const r = buildReport(baseInput({ battery: battery() }));
+  const s = findSection(r, 'BATTERY');
+  assert.strictEqual(s.status, 'normal');
+  assert.ok(s.normalEvidence.some((e) => e.includes('81.8')), '건강도는 근거로 남겨야 함');
+});
+
+test('80% 미만이면 지켜보기로 올린다', () => {
+  const r = buildReport(baseInput({ battery: battery({ healthPercent: 78, fullChargeCapacityMWh: 62400 }) }));
+  const s = findSection(r, 'BATTERY');
+  assert.strictEqual(s.status, 'watch');
+  const issue = s.issues.find((i) => i.ruleId === 'BATTERY-CAPACITY-DEGRADED');
+  assert.ok(issue);
+  assert.ok(issue.evidence.some((e) => e.includes('80,000') && e.includes('62,400')));
+});
+
+test('60% 미만이면 주의로 올린다', () => {
+  const r = buildReport(baseInput({ battery: battery({ healthPercent: 55, fullChargeCapacityMWh: 44000 }) }));
+  assert.strictEqual(findSection(r, 'BATTERY').status, 'warning');
+});
+
+test('[핵심] 사이클 수만으로는 판정하지 않는다', () => {
+  // 정격 사이클이 모델마다 300~1000회로 달라 "많다/적다"를 단정할 근거가 없다.
+  const r = buildReport(baseInput({ battery: battery({ healthPercent: 95, fullChargeCapacityMWh: 76000, cycleCount: 900 }) }));
+  const s = findSection(r, 'BATTERY');
+  assert.strictEqual(s.status, 'normal', '사이클이 많아도 용량이 멀쩡하면 이슈로 올리지 않는다');
+  assert.ok(s.normalEvidence.some((e) => e.includes('900')), '사이클 수는 근거로는 남겨야 함');
+});
+
+test('[핵심] 설계 용량을 못 읽으면 건강도를 계산하지 않는다', () => {
+  // 완충 용량만으로 "건강도 몇 %"라고 말할 수 없다. 이 노트북에서 WMI 경로가 실제로 그랬다.
+  const r = buildReport(baseInput({
+    battery: battery({ designCapacityMWh: null, healthPercent: null, sources: { designCapacity: null, fullCharge: 'wmi', cycleCount: 'wmi' } }),
+  }));
+  const s = findSection(r, 'BATTERY');
+  assert.strictEqual(s.result, 'UNKNOWN', '판단 보류여야 함');
+  assert.strictEqual(s.issues.length, 0, '근거 없이 이슈를 만들면 안 됨');
+  assert.ok(s.notTested.some((n) => n.includes('건강도')));
+});
+
+test('잔량이 낮을 때 잰 값이면 그 사실을 근거에 적는다', () => {
+  // 충전이 덜 된 상태에서는 완충 용량이 낮게 보고될 수 있다 — 판정의 전제를 밝힌다.
+  const r = buildReport(baseInput({
+    battery: battery({ healthPercent: 78, fullChargeCapacityMWh: 62400, chargePercent: 10 }),
+  }));
+  const issue = findSection(r, 'BATTERY').issues[0];
+  assert.ok(issue.evidence.some((e) => e.includes('10%') && e.includes('완전히 충전')),
+    issue.evidence.join(' | '));
 });
 
 // ============================================================

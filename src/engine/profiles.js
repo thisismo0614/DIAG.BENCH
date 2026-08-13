@@ -27,7 +27,7 @@ const DEEP_LONG = { cpuStressSec: 180, cpuSafetyTempC: 95, storageMB: 500, ramMB
 // (새 수집 단계가 생겼을 때 프로필마다 빠뜨리는 일이 없도록 기본은 항상 true).
 const ALL_ON = {
   cpu: true, cpuTrend: true, memory: true, memoryModules: true, overclock: true,
-  gpu: true, gpuTrend: true, storage: true, network: true, display: true,
+  battery: true, gpu: true, gpuTrend: true, storage: true, network: true, display: true,
   system: true, processes: true, events: true, identity: false,
 };
 

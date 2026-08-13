@@ -490,6 +490,141 @@ async function collectLiveSample() {
   };
 }
 
+// ---------- 배터리 (노트북) ----------
+// 중고 노트북 거래에서 가장 먼저 묻는 것이 배터리 상태다. 핵심 지표는
+// **설계 용량 대비 현재 완충 용량**(건강도)과 **사이클 수**다.
+//
+// 실측으로 확인한 경로(LG 노트북, Windows 10 한국어):
+//
+//   ❌ Win32_Battery.DesignCapacity / FullChargeCapacity → **둘 다 비어 있다**
+//      많은 노트북에서 이 값을 채우지 않는다. 여기에 의존하면 배터리 항목이 통째로 빈다.
+//   ❌ root\wmi BatteryStaticData → 클래스는 존재하지만 **인스턴스 조회 결과가 없다**
+//      (DesignedCapacity·CycleCount를 여기서 읽으려던 시도는 실패)
+//   ✅ root\wmi BatteryFullChargedCapacity → 65410 (mWh)
+//   ✅ root\wmi BatteryCycleCount → 173
+//   ✅ powercfg /batteryreport → DESIGN CAPACITY 80,000 mWh / FULL CHARGE 65,410 / CYCLE 173
+//
+// 즉 **설계 용량은 powercfg 리포트에서만 나온다.** 그래서 그쪽을 주 경로로 쓰고,
+// WMI 값은 교차 검증에 쓴다(위 사례에서 완충 용량·사이클 수가 정확히 일치했다).
+// 라벨은 한국어 Windows에서도 영어로 나왔지만, 다른 환경을 위해 한글 라벨도 함께 찾는다.
+
+// powercfg 배터리 리포트 HTML에서 용량·사이클을 뽑는다.
+// 실제 장비 없이 테스트할 수 있도록 파서를 따로 내보낸다(SMART·ping 파서와 같은 이유).
+function parseBatteryReport(html) {
+  if (!html) return { designCapacityMWh: null, fullChargeCapacityMWh: null, cycleCount: null };
+
+  // 구조: <span class="label">DESIGN CAPACITY</span></td><td>80,000 mWh</td>
+  const pick = (patterns) => {
+    for (const p of patterns) {
+      const m = html.match(new RegExp(`<span class="label">\\s*${p}\\s*</span>[\\s\\S]*?<td[^>]*>([\\s\\S]*?)</td>`, 'i'));
+      if (m) {
+        const n = Number(String(m[1]).replace(/<[^>]+>/g, '').replace(/[,\s]/g, '').replace(/mwh$/i, ''));
+        if (Number.isFinite(n)) return n;
+      }
+    }
+    return null;
+  };
+
+  return {
+    designCapacityMWh: pick(['DESIGN CAPACITY', '설계\\s*용량']),
+    fullChargeCapacityMWh: pick(['FULL CHARGE CAPACITY', '전체\\s*충전\\s*용량', '완전\\s*충전\\s*용량']),
+    cycleCount: pick(['CYCLE COUNT', '주기\\s*수', '사이클\\s*수']),
+  };
+}
+
+// Win32_Battery.BatteryStatus 코드 → 사람이 읽는 상태.
+// 1=방전 중, 2=AC 연결(충전 중은 아님), 3=완충, 4=낮음, 5=위험, 6=충전 중 …
+const BATTERY_STATUS = {
+  1: '배터리로 동작 중', 2: '전원 연결됨', 3: '완전 충전됨', 4: '잔량 부족',
+  5: '잔량 매우 부족', 6: '충전 중', 7: '충전 중(잔량 부족)', 8: '충전 중(잔량 매우 부족)',
+  9: '충전 중(완충 근접)', 10: '상태 확인 불가', 11: '부분 충전됨',
+};
+// Win32_Battery.Chemistry 코드
+const BATTERY_CHEMISTRY = {
+  1: '기타', 2: '알 수 없음', 3: '납축', 4: '니켈카드뮴', 5: '니켈수소',
+  6: '리튬이온', 7: '아연공기', 8: '리튬폴리머',
+};
+
+async function collectBattery() {
+  const empty = {
+    present: false, isLaptop: false, name: null, chemistry: null, statusText: null,
+    chargePercent: null, designCapacityMWh: null, fullChargeCapacityMWh: null,
+    cycleCount: null, healthPercent: null, sources: {}, error: null,
+  };
+  if (process.platform !== 'win32') return { ...empty, error: 'Windows에서만 조회할 수 있습니다.' };
+
+  // 배터리 기본 정보 + WMI 용량/사이클을 한 번에 읽는다.
+  const out = await run(
+    'powershell -NoProfile -Command "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; '
+    + '$b = Get-CimInstance Win32_Battery | Select-Object -First 1; '
+    + '$f = Get-CimInstance -Namespace root\\wmi -ClassName BatteryFullChargedCapacity -EA SilentlyContinue | Select-Object -First 1; '
+    + '$c = Get-CimInstance -Namespace root\\wmi -ClassName BatteryCycleCount -EA SilentlyContinue | Select-Object -First 1; '
+    + '$s = Get-CimInstance Win32_ComputerSystem; '
+    + '[PSCustomObject]@{ name=$b.Name; status=$b.BatteryStatus; charge=$b.EstimatedChargeRemaining; '
+    + 'chem=$b.Chemistry; designV=$b.DesignVoltage; wmiDesign=$b.DesignCapacity; wmiFull=$b.FullChargeCapacity; '
+    + 'fullCap=$f.FullChargedCapacity; cycles=$c.CycleCount; sysType=$s.PCSystemType } | ConvertTo-Json -Compress"',
+    9000
+  );
+
+  // 조회 자체가 실패한 것과 "배터리가 없는 기기"는 다르다. 구분해서 남긴다 —
+  // 데스크톱에 "배터리 검사 못 함"이라고 하면 틀린 말이고, 노트북에서 조회가 실패한 것을
+  // "배터리 없음"으로 넘기면 진짜 문제를 숨기게 된다.
+  if (!out) return { ...empty, queryFailed: true, error: '배터리 정보를 조회하지 못했습니다.' };
+
+  let info = null;
+  try { info = JSON.parse(out); } catch { info = null; }
+  if (!info) return { ...empty, queryFailed: true, error: '배터리 정보를 해석하지 못했습니다.' };
+  // PCSystemType 2 = Mobile(노트북). 데스크톱이면 배터리가 없는 게 정상이다.
+  const isLaptop = Number(info.sysType) === 2;
+  if (!info.name) return { ...empty, isLaptop, error: isLaptop ? '배터리를 찾지 못했습니다(분리형이거나 인식되지 않음).' : null };
+
+  const num = (v) => {
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  };
+
+  // 설계 용량은 powercfg 리포트에서만 나온다(위 주석 참고). 리포트를 임시 폴더에 만들고 지운다.
+  const reportPath = path.join(os.tmpdir(), `diagbench-battery-${Date.now()}.html`);
+  let report = { designCapacityMWh: null, fullChargeCapacityMWh: null, cycleCount: null };
+  await run(`powercfg /batteryreport /output "${reportPath}"`, 12000);
+  try {
+    if (fs.existsSync(reportPath)) {
+      report = parseBatteryReport(fs.readFileSync(reportPath, 'utf-8'));
+      fs.unlinkSync(reportPath);
+    }
+  } catch { /* 리포트를 못 읽어도 WMI 값은 살린다 */ }
+
+  const design = report.designCapacityMWh ?? num(info.wmiDesign);
+  const full = num(info.fullCap) ?? report.fullChargeCapacityMWh ?? num(info.wmiFull);
+  const cycles = num(info.cycles) ?? report.cycleCount;
+
+  // 건강도는 **두 값이 모두 있을 때만** 계산한다. 하나라도 없으면 null —
+  // 완충 용량만 있다고 "건강도 몇 %"라고 말할 수 없다.
+  const healthPercent = design && full ? round((full / design) * 100, 1) : null;
+
+  return {
+    present: true,
+    isLaptop,
+    name: str(info.name),
+    chemistry: BATTERY_CHEMISTRY[Number(info.chem)] || null,
+    statusText: BATTERY_STATUS[Number(info.status)] || null,
+    statusCode: Number(info.status) || null,
+    chargePercent: num(info.charge),
+    designVoltageV: info.designV ? round(Number(info.designV) / 1000, 3) : null,
+    designCapacityMWh: design,
+    fullChargeCapacityMWh: full,
+    cycleCount: cycles,
+    healthPercent,
+    // 어느 경로에서 읽었는지 남긴다 — 값이 이상할 때 원인을 찾을 수 있어야 한다.
+    sources: {
+      designCapacity: report.designCapacityMWh ? 'powercfg' : (num(info.wmiDesign) ? 'wmi' : null),
+      fullCharge: num(info.fullCap) ? 'wmi' : (report.fullChargeCapacityMWh ? 'powercfg' : null),
+      cycleCount: num(info.cycles) ? 'wmi' : (report.cycleCount ? 'powercfg' : null),
+    },
+    error: null,
+  };
+}
+
 // ---------- 설정 변경(오버클럭/언더볼팅) 상태 ----------
 // "이 PC가 정품 설정 그대로인가, 누가 손댔는가"를 본다. 중고 거래에서 특히 중요한 정보다.
 //
@@ -959,6 +1094,7 @@ module.exports = {
   collectMemory,
   collectMemoryModules,
   collectOverclockState,
+  collectBattery,
   collectGpu,
   sampleGpuTrend,
   collectStorage,
@@ -977,4 +1113,5 @@ module.exports = {
   parseSmartIdentity,
   parseSmartHealthOutput,
   parsePingOutput,
+  parseBatteryReport,
 };

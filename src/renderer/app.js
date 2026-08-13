@@ -31,7 +31,7 @@ const stageLabels = {
 };
 const catLabelKo = {
   CPU: 'CPU', GPU: 'GPU', RAM: '메모리', STORAGE: '저장장치',
-  NETWORK: '네트워크', DISPLAY: '디스플레이', DRIVERS: '드라이버',
+  NETWORK: '네트워크', DISPLAY: '디스플레이', BATTERY: '배터리', DRIVERS: '드라이버',
   EVENTS: 'Windows 이벤트',
 };
 

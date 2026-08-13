@@ -167,6 +167,7 @@ function buildInspectionReport(diagnosisReport, hardwareIdentity, timestamp, dee
     STORAGE: '저장장치 용량 및 SMART',
     NETWORK: '네트워크 핑/지터/손실',
     DISPLAY: '디스플레이 해상도·주사율',
+    BATTERY: '배터리 용량·사이클',
     DRIVERS: '드라이버 오류 장치',
     EVENTS: 'Windows 이벤트 로그(최근 7일)',
   };
@@ -174,7 +175,9 @@ function buildInspectionReport(diagnosisReport, hardwareIdentity, timestamp, dee
   const notTested = [];
   Object.entries(BASE_SCOPE).forEach(([cat, label]) => {
     const s = sectionsByCat[cat];
-    if (!s) { notTested.push(`${label} (검사하지 않음)`); return; }
+    // 섹션이 아예 없으면 **이 기기에 해당 없는 항목**이다(예: 데스크톱의 배터리).
+    // "검사 안 함"으로 적으면 없는 결함을 만들어내고, 등급에서 A+까지 빼앗는다.
+    if (!s) return;
     if (s.result === RESULT.NOT_TESTED) {
       notTested.push(`${label} — ${s.note || '이 환경에서 측정할 수 없음'}`);
     } else {
@@ -255,8 +258,9 @@ function buildInspectionReport(diagnosisReport, hardwareIdentity, timestamp, dee
   // 등급은 검사된 범위에 대한 판정이므로 글자는 유지하되, A+/A의 문구가 실제보다
   // 넓게 읽히지 않도록 범위를 함께 적고 A+는 주지 않는다(A+는 "정밀 검사 포함"이라는 뜻이라
   // 일부를 아예 못 검사한 상태와 양립할 수 없다).
+  // 해당 없는 항목(섹션 자체가 없는 경우)은 미검사로 세지 않는다.
   const untestedCategories = Object.keys(BASE_SCOPE)
-    .filter((c) => !sectionsByCat[c] || sectionsByCat[c].result === RESULT.NOT_TESTED);
+    .filter((c) => sectionsByCat[c] && sectionsByCat[c].result === RESULT.NOT_TESTED);
   const coverageComplete = untestedCategories.length === 0;
 
   let overallGrade;
@@ -273,7 +277,8 @@ function buildInspectionReport(diagnosisReport, hardwareIdentity, timestamp, dee
   // "무엇 때문에 이 등급인지 / 어디는 정상인지"를 항상 같이 들고 다닌다.
   const CATEGORY_LABEL = {
     CPU: 'CPU', GPU: 'GPU', RAM: '메모리', STORAGE: '저장장치',
-    NETWORK: '네트워크', DISPLAY: '디스플레이', DRIVERS: '드라이버', EVENTS: '시스템 이벤트 기록',
+    NETWORK: '네트워크', DISPLAY: '디스플레이', BATTERY: '배터리',
+    DRIVERS: '드라이버', EVENTS: '시스템 이벤트 기록',
   };
   const gradeDrivers = diagnosisReport.sections
     .flatMap((s) => (s.issues || [])

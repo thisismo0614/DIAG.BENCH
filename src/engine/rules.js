@@ -810,6 +810,77 @@ function evaluateNetwork(net) {
   });
 }
 
+// ---------- 배터리 (노트북) ----------
+// 건강도 임계값의 근거: 배터리 업계 통상 보증 기준이 "정격 사이클 도달 시 설계 용량의 80% 유지"다.
+// 그래서 80% 미만이면 열화가 진행된 것으로 보고, 60% 미만이면 실사용에 불편한 수준으로 본다.
+//
+// ⚠ 사이클 수만으로는 판정하지 않는다. 제조사·모델마다 정격 사이클이 300~1000회로 크게 달라서
+//   "173회면 많다/적다"를 단정할 근거가 없다. 사이클은 근거 줄로만 남긴다.
+const BATTERY_HEALTH_WATCH = 80;
+const BATTERY_HEALTH_WARN = 60;
+
+function evaluateBattery(battery) {
+  const issues = [];
+  const evidence = [];
+  const notTested = [];
+  const b = battery || {};
+
+  // 데스크톱에는 배터리가 없는 게 정상이다 — "검사 못 함"이 아니라 **검사 대상이 아니다.**
+  // 배터리 없는 기기에 "배터리 검사 안 함"이라고 하면 없는 결함을 만들어내는 셈이라,
+  // 섹션 자체를 만들지 않는다(null을 돌려주면 buildReport가 걸러낸다).
+  // 단, 노트북이거나 조회 자체가 실패한 경우는 반드시 드러내야 한다.
+  if (!b.present) {
+    if (!b.isLaptop && !b.queryFailed) return null;
+    return finalize('BATTERY', [], b.error || '배터리를 찾지 못했습니다.', [], {
+      tested: false,
+      notTested: [`배터리 상태 — ${b.error || '조회 실패'}`],
+    });
+  }
+
+  if (b.chargePercent !== null) evidence.push(`현재 잔량 ${b.chargePercent}%`);
+  if (b.statusText) evidence.push(b.statusText);
+  if (b.chemistry) evidence.push(b.chemistry);
+  if (b.cycleCount !== null) evidence.push(`충전 사이클 ${b.cycleCount.toLocaleString()}회`);
+  if (b.fullChargeCapacityMWh) evidence.push(`완충 용량 ${b.fullChargeCapacityMWh.toLocaleString()} mWh`);
+  if (b.designCapacityMWh) evidence.push(`설계 용량 ${b.designCapacityMWh.toLocaleString()} mWh`);
+
+  // 설계 용량을 못 읽으면 건강도를 계산하지 않는다. 완충 용량만으로는 말할 수 없다.
+  if (b.healthPercent === null) {
+    notTested.push('배터리 건강도 — 설계 용량을 읽지 못해 계산하지 않음');
+    evidence.push('설계 용량을 읽지 못해 "설계 대비 몇 %"는 계산하지 않았습니다');
+    return finalize('BATTERY', issues, null, evidence, { tested: true, unknown: true, notTested });
+  }
+
+  evidence.push(`설계 대비 ${b.healthPercent}%`);
+
+  if (b.healthPercent < BATTERY_HEALTH_WATCH) {
+    const kb = knowledge('BATTERY-CAPACITY-DEGRADED');
+    const severe = b.healthPercent < BATTERY_HEALTH_WARN;
+    const issue = mkIssue(severe ? 'warning' : 'watch', kb.title,
+      `설계 용량 ${b.designCapacityMWh.toLocaleString()} mWh 대비 현재 완충 용량이 `
+      + `${b.fullChargeCapacityMWh.toLocaleString()} mWh로 ${b.healthPercent}%입니다. `
+      + (severe
+        ? '실사용 시간이 눈에 띄게 짧아지는 수준입니다.'
+        : '배터리 보증 기준으로 흔히 쓰이는 80%를 밑돌아, 열화가 진행된 상태로 보입니다.'),
+      kb.causes, kb.actions.map((a) => a.text),
+      CONFIDENCE_SCORE.CONFIRMED,
+      [
+        `설계 ${b.designCapacityMWh.toLocaleString()} mWh / 완충 ${b.fullChargeCapacityMWh.toLocaleString()} mWh = ${b.healthPercent}%`,
+        ...(b.cycleCount !== null ? [`충전 사이클 ${b.cycleCount.toLocaleString()}회 — 정격 사이클은 모델마다 300~1000회로 달라 이 값만으로 판정하지는 않았습니다`] : []),
+        ...(b.chargePercent !== null && b.chargePercent < 90 ? [`측정 시 잔량 ${b.chargePercent}% — 완전히 충전한 뒤 다시 재면 값이 달라질 수 있습니다`] : []),
+      ],
+      kb.verification);
+    issue.ruleId = kb.id;
+    issue.ruleVersion = kb.version;
+    issue.confidenceLevel = 'CONFIRMED';
+    issue.actionDetails = kb.actions;
+    attachWizard(issue);
+    issues.push(issue);
+  }
+
+  return finalize('BATTERY', issues, null, evidence, { tested: true, notTested });
+}
+
 function evaluateSystem(system) {
   const issues = [];
   if (system.driverErrors && system.driverErrors.length > 0) {
@@ -1255,7 +1326,7 @@ function applyCorrelations(sections, configState) {
 }
 
 // ---------- 통합 ----------
-function buildReport({ cpu, cpuTrend, memory, memoryModules, overclockState, gpu, gpuTrend, storage, network, display, visualChecks, vramCheck, gpuStressCheck, baseline, baselineSnapshot, deepTests, system, symptom, profile, topProcesses, eventLog }) {
+function buildReport({ cpu, cpuTrend, memory, memoryModules, overclockState, battery, gpu, gpuTrend, storage, network, display, visualChecks, vramCheck, gpuStressCheck, baseline, baselineSnapshot, deepTests, system, symptom, profile, topProcesses, eventLog }) {
   // 정밀 검사(부하 테스트)를 돌렸다면 그 결과도 규칙 엔진에 넣는다. 이게 빠져 있으면
   // "RAM 검사에서 오류가 났는데 최종 등급은 정상"이라는 최악의 상황이 생긴다.
   const dt = deepTests && deepTests.included ? deepTests : {};
@@ -1291,9 +1362,10 @@ function buildReport({ cpu, cpuTrend, memory, memoryModules, overclockState, gpu
     evaluateStorage(storage, dt.storageTest),
     evaluateNetwork(network),
     evaluateDisplay(display, visualChecks),
+    evaluateBattery(battery),   // 배터리 없는 기기에서는 null → 아래에서 걸러진다
     evaluateSystem(system),
     evaluateEventLogs(eventLog),
-  ];
+  ].filter(Boolean);
 
   applyCorrelations(sections, configState);
 
@@ -1339,7 +1411,8 @@ function buildReport({ cpu, cpuTrend, memory, memoryModules, overclockState, gpu
   // 가리키는지 알 수 없다.
   const CATEGORY_NAME = {
     CPU: 'CPU', GPU: 'GPU', RAM: '메모리', STORAGE: '저장장치',
-    NETWORK: '네트워크', DISPLAY: '디스플레이', DRIVERS: '드라이버', EVENTS: 'Windows 이벤트',
+    NETWORK: '네트워크', DISPLAY: '디스플레이', BATTERY: '배터리',
+    DRIVERS: '드라이버', EVENTS: 'Windows 이벤트',
   };
   const untested = sections.filter((s) => s.result === RESULT.NOT_TESTED)
     .map((s) => CATEGORY_NAME[s.category] || s.category);
