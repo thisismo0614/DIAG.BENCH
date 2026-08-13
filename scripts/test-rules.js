@@ -8,6 +8,7 @@ const { buildReport } = require('../src/engine/rules');
 const { buildComparison } = require('../src/engine/compare');
 const { summarizeBaselineSamples, compareToBaseline } = require('../src/engine/baseline');
 const { analyzeMemoryConfig } = require('../src/engine/memoryConfig');
+const { analyzeConfiguration } = require('../src/engine/overclock');
 const { buildInspectionReport } = require('../src/engine/inspectionReport');
 
 let passed = 0;
@@ -1653,6 +1654,138 @@ test('[기획서 §14] 조치마다 위험도가 붙는다', () => {
 test('메모리 구성이 없으면 기존 RAM 진단이 달라지지 않는다', () => {
   const withNothing = buildReport(baseInput());
   assert.strictEqual(findSection(withNothing, 'RAM').status, 'normal');
+});
+
+// ============================================================
+section('설정 변경(오버클럭/언더볼팅) 상태 진단');
+// ============================================================
+
+function ocState(over = {}) {
+  return {
+    cpu: {
+      model: 'Intel(R) Xeon(R) CPU E3-1230 v5 @ 3.40GHz', stockBaseGHz: 3.4, maxClockGHz: 3.4,
+      bclkMHz: 100, voltageV: null, voltageReadable: false, readable: true, ...(over.cpu || {}),
+    },
+    gpu: {
+      supported: true, powerLimitW: 120, defaultPowerLimitW: 120, minPowerLimitW: 60,
+      maxPowerLimitW: 140, enforcedPowerLimitW: 120, maxClockMHz: 1923, maxMemClockMHz: 4004, ...(over.gpu || {}),
+    },
+  };
+}
+const stockMemSummary = { currentMTs: 2133, highestRatedMTs: 2133 };
+
+test('정품 설정이면 stock으로 판정하고 이슈를 만들지 않는다 (이 PC 실제 값)', () => {
+  const c = analyzeConfiguration({ overclockState: ocState(), memorySummary: stockMemSummary });
+  assert.strictEqual(c.cpu.status, 'stock');
+  assert.strictEqual(c.gpu.status, 'stock');
+  assert.strictEqual(c.memory.status, 'stock');
+  assert.strictEqual(c.modified, false);
+  assert.strictEqual(c.cpu.findings.length + c.gpu.findings.length, 0);
+});
+
+test('[기획서 §8] GPU 전력 제한이 기본값과 다르면 "설정 변경됨"', () => {
+  const c = analyzeConfiguration({ overclockState: ocState({ gpu: { powerLimitW: 140 } }), memorySummary: stockMemSummary });
+  assert.strictEqual(c.gpu.status, 'modified');
+  const f = c.gpu.findings.find((x) => x.ruleId === 'GPU_POWER_LIMIT_MODIFIED');
+  assert.ok(f);
+  assert.strictEqual(f.confidence, 'CONFIRMED', '드라이버가 준 값 비교라 확실해야 함');
+  assert.ok(f.title.includes('상향'));
+});
+
+test('전력 제한 하향(언더볼팅/저소음)도 같은 규칙으로 잡는다', () => {
+  const c = analyzeConfiguration({ overclockState: ocState({ gpu: { powerLimitW: 90 } }), memorySummary: stockMemSummary });
+  assert.ok(c.gpu.findings[0].title.includes('하향'));
+});
+
+test('CPU 기본 클럭이 정품보다 높으면 설정 변경으로 본다', () => {
+  const c = analyzeConfiguration({ overclockState: ocState({ cpu: { maxClockGHz: 3.8, bclkMHz: 112 } }), memorySummary: stockMemSummary });
+  assert.strictEqual(c.cpu.status, 'modified');
+  const f = c.cpu.findings.find((x) => x.ruleId === 'CPU_BASE_CLOCK_MODIFIED');
+  assert.ok(f);
+  assert.ok(f.evidence.some((e) => e.includes('112')), 'BCLK 이탈도 근거에 넣어야 함');
+});
+
+test('반올림 오차(3401MHz ↔ 3.40GHz)를 오버클럭으로 오판하지 않는다', () => {
+  const c = analyzeConfiguration({ overclockState: ocState({ cpu: { maxClockGHz: 3.41 } }), memorySummary: stockMemSummary });
+  assert.strictEqual(c.cpu.status, 'stock');
+});
+
+test('모델명에 정품 클럭이 없으면 판정하지 않고 검사 안 함으로 남긴다', () => {
+  // AMD 모델명에는 "@ x.xxGHz"가 없는 경우가 많다. 비교 기준이 없으면 말하지 않는다.
+  const c = analyzeConfiguration({
+    overclockState: ocState({ cpu: { model: 'AMD Ryzen 7 5800X 8-Core Processor', stockBaseGHz: null, maxClockGHz: 3.8 } }),
+    memorySummary: stockMemSummary,
+  });
+  assert.strictEqual(c.cpu.status, 'unknown');
+  assert.strictEqual(c.cpu.findings.length, 0);
+  assert.ok(c.notTested.some((n) => n.includes('정품 값')));
+});
+
+test('CPU 전압을 못 읽으면 언더볼팅 여부를 검사 안 함으로 명시한다', () => {
+  const c = analyzeConfiguration({ overclockState: ocState(), memorySummary: stockMemSummary });
+  assert.ok(c.notTested.some((n) => n.includes('전압')));
+});
+
+test('GPU 최대 부스트 클럭은 판정에 쓰지 않고 참고값으로만 남긴다', () => {
+  // 공장 OC 모델은 원래 레퍼런스보다 높다. 이걸로 판정하면 멀쩡한 카드를 OC라고 하게 된다.
+  const c = analyzeConfiguration({ overclockState: ocState({ gpu: { maxClockMHz: 2100 } }), memorySummary: stockMemSummary });
+  assert.strictEqual(c.gpu.status, 'stock');
+  assert.ok(c.gpu.evidence.some((e) => e.includes('판정에 쓰지 않음')));
+});
+
+test('메모리가 정격보다 높으면 profile-active', () => {
+  const c = analyzeConfiguration({ overclockState: ocState(), memorySummary: { currentMTs: 3200, highestRatedMTs: 2666 } });
+  assert.strictEqual(c.memory.status, 'profile-active');
+  assert.strictEqual(c.modified, true);
+});
+
+test('nvidia-smi를 못 쓰면 GPU 설정을 unknown으로 두고 complete=false', () => {
+  const c = analyzeConfiguration({ overclockState: ocState({ gpu: { supported: false } }), memorySummary: stockMemSummary });
+  assert.strictEqual(c.gpu.status, 'unknown');
+  assert.strictEqual(c.complete, false, '판정 못 한 항목이 있으면 "전부 정품"이라고 할 수 없다');
+});
+
+test('진단 엔진에 연결되어 GPU 섹션에 이슈로 나타난다', () => {
+  const r = buildReport(baseInput({
+    gpu: { controllers: [{ model: 'Test GPU' }], supported: true, nvidia: { loadPercent: 5, tempC: 40, clockMHz: 1500, vramUsedMB: 500, vramTotalMB: 8192 } },
+    overclockState: ocState({ gpu: { powerLimitW: 140 } }),
+  }));
+  const g = findSection(r, 'GPU');
+  assert.ok(g.issues.find((i) => i.ruleId === 'GPU_POWER_LIMIT_MODIFIED'));
+  assert.strictEqual(g.configStatus, 'modified');
+  assert.ok(r.configuration, '리포트 최상위에 설정 상태 요약이 실려야 함');
+});
+
+test('[기획서 §12] 설정 변경 + 하드웨어 오류 이벤트 → 조사 대상으로 올린다', () => {
+  const r = buildReport(baseInput({
+    overclockState: ocState({ gpu: { powerLimitW: 140 } }),
+    eventLog: withEvents({ whea: 3 }),
+  }));
+  const sys = findSection(r, 'EVENTS');
+  const issue = sys.issues.find((i) => i.ruleId === 'CONFIG_STABILITY_INVESTIGATION');
+  assert.ok(issue, '둘 다 있으면 조사 대상으로 올려야 함');
+  assert.strictEqual(issue.confidenceLevel, 'NEEDS_VERIFICATION', '인과를 단정하면 안 됨');
+  assert.ok(issue.evidence.some((e) => e.includes('인과관계는 확인되지 않았습니다')));
+});
+
+test('[핵심] 설정만 변경되고 오류가 없으면 조사 대상으로 올리지 않는다', () => {
+  const r = buildReport(baseInput({ overclockState: ocState({ gpu: { powerLimitW: 140 } }) }));
+  const sys = findSection(r, 'EVENTS');
+  assert.ok(!sys.issues.find((i) => i.ruleId === 'CONFIG_STABILITY_INVESTIGATION'),
+    '설정 변경만으로 문제라고 하면 과잉 경고다');
+});
+
+test('[핵심] 오류만 있고 설정이 정품이면 설정 탓을 하지 않는다', () => {
+  const r = buildReport(baseInput({ overclockState: ocState(), eventLog: withEvents({ whea: 3 }) }));
+  const sys = findSection(r, 'EVENTS');
+  assert.ok(!sys.issues.find((i) => i.ruleId === 'CONFIG_STABILITY_INVESTIGATION'));
+});
+
+test('설정 정보가 없어도 기존 진단이 깨지지 않는다', () => {
+  const r = buildReport(baseInput());
+  assert.strictEqual(findSection(r, 'CPU').status, 'normal');
+  assert.strictEqual(findSection(r, 'DRIVERS').status, 'normal');
+  assert.ok(r.configuration.notTested.length > 0, '못 읽었으면 검사 안 함으로 남아야 함');
 });
 
 // ============================================================

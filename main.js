@@ -73,6 +73,8 @@ ipcMain.handle('run-full-diagnostic', async (event, { symptom } = {}) => {
   const memory = await collectors.collectMemory();
   // 용량/사용률과 별개로 모듈(DIMM) 단위 구성도 읽는다 — 혼합 구성·정격 미달 동작 진단의 근거.
   const memoryModules = await collectors.collectMemoryModules();
+  // 정품 설정 그대로인지(오버클럭/언더볼팅) — 중고 거래에서 특히 중요한 정보.
+  const overclockState = await collectors.collectOverclockState();
 
   send('gpu');
   const gpu = await collectors.collectGpu();
@@ -105,11 +107,11 @@ ipcMain.handle('run-full-diagnostic', async (event, { symptom } = {}) => {
   const visualChecks = displayChecks.activeDisplayChecks(app.getPath('userData'));
   const vramCheck = vramChecks.activeVramCheck(app.getPath('userData'));
   const gpuStressCheck = gpuStressChecks.activeGpuStressCheck(app.getPath('userData'));
-  const report = buildReport({ cpu, cpuTrend, memory, memoryModules, gpu, gpuTrend, storage, network, display, visualChecks, vramCheck, gpuStressCheck, baseline, baselineSnapshot, system, symptom, topProcesses, eventLog });
+  const report = buildReport({ cpu, cpuTrend, memory, memoryModules, overclockState, gpu, gpuTrend, storage, network, display, visualChecks, vramCheck, gpuStressCheck, baseline, baselineSnapshot, system, symptom, topProcesses, eventLog });
 
   // raw에도 넣어둔다 — SMART 재검사처럼 raw로 report를 다시 만드는 경로에서 빠지면
   // 정정 후 리포트에서만 VRAM 근거가 사라져 버린다.
-  const raw = { cpu, cpuTrend, memory, memoryModules, gpu, gpuTrend, storage, network, display, visualChecks, vramCheck, gpuStressCheck, baseline, baselineSnapshot, system, topProcesses, eventLog };
+  const raw = { cpu, cpuTrend, memory, memoryModules, overclockState, gpu, gpuTrend, storage, network, display, visualChecks, vramCheck, gpuStressCheck, baseline, baselineSnapshot, system, topProcesses, eventLog };
 
   // 진단 전/후 비교: 새 기록을 남기기 전에 "직전 기록"을 먼저 읽어와 비교한다.
   const prevHistory = history.loadHistory(app.getPath('userData'));
@@ -351,6 +353,7 @@ ipcMain.handle('run-inspection-scan', async (event, { includeDeepTests } = {}) =
   send('memory');
   const memory = await collectors.collectMemory();
   const memoryModules = await collectors.collectMemoryModules();
+  const overclockState = await collectors.collectOverclockState();
   send('gpu');
   const gpu = await collectors.collectGpu();
   send('storage');
@@ -384,7 +387,7 @@ ipcMain.handle('run-inspection-scan', async (event, { includeDeepTests } = {}) =
   const visualChecks = displayChecks.activeDisplayChecks(app.getPath('userData'));
   const vramCheck = vramChecks.activeVramCheck(app.getPath('userData'));
   const gpuStressCheck = gpuStressChecks.activeGpuStressCheck(app.getPath('userData'));
-  const raw = { cpu, memory, memoryModules, gpu, storage, network, display, visualChecks, vramCheck, gpuStressCheck, baseline, baselineSnapshot, system, eventLog, deepTests };
+  const raw = { cpu, memory, memoryModules, overclockState, gpu, storage, network, display, visualChecks, vramCheck, gpuStressCheck, baseline, baselineSnapshot, system, eventLog, deepTests };
   // deepTests를 반드시 함께 넘긴다. 이게 빠지면 정밀 검사에서 오류가 나도 규칙 엔진이
   // 그 사실을 아예 못 봐서 최종 등급이 "정상"으로 나온다.
   const diagnosisReport = buildReport({ ...raw, cpuTrend: null, gpuTrend: null, symptom: 'full' });

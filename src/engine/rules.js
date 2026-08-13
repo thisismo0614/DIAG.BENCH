@@ -11,6 +11,7 @@
 
 const { compareToBaseline, deltasForSection, IDLE_CPU_LOAD_MAX, IDLE_GPU_LOAD_MAX } = require('./baseline');
 const { analyzeMemoryConfig } = require('./memoryConfig');
+const { analyzeConfiguration, STATUS: CONFIG_STATUS } = require('./overclock');
 
 // 진단 신뢰도의 어휘. 숫자만으로는 "무엇을 근거로 이 정도 확신을 하는가"가 드러나지 않는다.
 //   CONFIRMED          실제 오류/사실이 측정으로 확인됨
@@ -44,10 +45,11 @@ function issueFromFinding(f) {
   return issue;
 }
 
-function evaluateCpu(cpu, trend, topProcesses, cpuStress, baselineComparison) {
+function evaluateCpu(cpu, trend, topProcesses, cpuStress, baselineComparison, configState) {
   const stress = cpuStressFindings(cpuStress);
   const base = baselineFindings(baselineComparison, 'CPU');
-  const issues = [...stress.issues, ...base.issues];
+  const cfg = (configState && configState.cpu) || { findings: [], evidence: [] };
+  const issues = [...stress.issues, ...base.issues, ...cfg.findings.map(issueFromFinding)];
 
   if (cpu.tempC !== null) {
     if (cpu.tempC >= 95) {
@@ -115,9 +117,11 @@ function evaluateCpu(cpu, trend, topProcesses, cpuStress, baselineComparison) {
   if (cpu.tempC !== null) normalEvidence.push(`온도 ${cpu.tempC}°C`);
   normalEvidence.push(`부하 ${cpu.loadPercent}%`);
   if (cpu.clockGHz) normalEvidence.push(`클럭 ${cpu.clockGHz}GHz`);
-  normalEvidence.push(...stress.evidence, ...base.evidence);
+  normalEvidence.push(...stress.evidence, ...base.evidence, ...cfg.evidence);
 
-  return finalize('CPU', issues, null, normalEvidence);
+  const section = finalize('CPU', issues, null, normalEvidence);
+  section.configStatus = configState ? configState.cpu.status : null;
+  return section;
 }
 
 function evaluateMemory(mem, topProcesses, ramTest, baselineComparison, memModules) {
@@ -258,11 +262,12 @@ function evaluateGpu(gpu, trend, checks = {}) {
   const vram = vramCheckFindings(checks.vramCheck);
   const stress = gpuStressFindings(checks.gpuStressCheck);
   const base = baselineFindings(checks.baselineComparison, 'GPU');
-  const issues = [...vram.issues, ...stress.issues, ...base.issues];
+  const cfg = (checks.configState && checks.configState.gpu) || { findings: [], evidence: [] };
+  const issues = [...vram.issues, ...stress.issues, ...base.issues, ...cfg.findings.map(issueFromFinding)];
   if (!gpu.supported) {
     const models = (gpu.controllers || []).map((c) => c.model).filter(Boolean).join(', ');
     return finalize('GPU', issues, 'NVIDIA GPU가 아니거나 nvidia-smi를 찾을 수 없어 실시간 로드/온도 진단은 건너뛰었습니다. (VRAM·모델 정보만 표시)',
-      [...(models ? [`인식된 GPU: ${models}`] : []), ...vram.evidence, ...stress.evidence, ...base.evidence]);
+      [...(models ? [`인식된 GPU: ${models}`] : []), ...vram.evidence, ...stress.evidence, ...base.evidence, ...cfg.evidence]);
   }
   const nv = gpu.nvidia;
   if (nv.tempC >= 90) {
@@ -310,8 +315,10 @@ function evaluateGpu(gpu, trend, checks = {}) {
       72, [`VRAM 사용률 ${Math.round((nv.vramUsedMB / nv.vramTotalMB) * 100)}%`],
       '그래픽 옵션을 낮춘 뒤 같은 장면에서 VRAM 사용률을 다시 확인하세요.'));
   }
-  const normalEvidence = [`온도 ${nv.tempC}°C`, `부하 ${nv.loadPercent}%`, `클럭 ${nv.clockMHz}MHz`, `VRAM ${nv.vramUsedMB}/${nv.vramTotalMB}MB`, ...vram.evidence, ...stress.evidence, ...base.evidence];
-  return finalize('GPU', issues, null, normalEvidence);
+  const normalEvidence = [`온도 ${nv.tempC}°C`, `부하 ${nv.loadPercent}%`, `클럭 ${nv.clockMHz}MHz`, `VRAM ${nv.vramUsedMB}/${nv.vramTotalMB}MB`, ...vram.evidence, ...stress.evidence, ...base.evidence, ...cfg.evidence];
+  const section = finalize('GPU', issues, null, normalEvidence);
+  section.configStatus = checks.configState ? checks.configState.gpu.status : null;
+  return section;
 }
 
 // ---------- 기준선(평소 상태) 대비 변화 → 진단 ----------
@@ -1022,7 +1029,61 @@ function crossReference(issueA, issueB, noteForA, noteForB) {
   });
 }
 
-function applyCorrelations(sections) {
+// 설정이 변경된 상태 × 실제 하드웨어 오류 이벤트.
+// 기획서 §12의 세 번째 예시 규칙(WHEA_ERRORS > 0 AND CONFIGURATION_CHANGED)이다.
+//
+// 둘 중 하나만 있으면 아무것도 하지 않는다:
+//   - 설정만 바뀌어 있고 오류가 없다면 → 그냥 "설정 변경됨"이다. 문제라고 하면 과잉 경고다.
+//   - 오류만 있고 설정은 정품이라면 → 원인이 설정이 아니므로 다른 곳을 봐야 한다.
+// 둘 다 있을 때만 "이 조합을 먼저 확인해보라"고 조사 방향을 제시한다. 원인이라고 단정하지 않는다.
+function applyConfigStabilityCorrelation(sections, configState) {
+  if (!configState || !configState.modified) return;
+
+  const errorEvents = [
+    findIssue(sections, 'EVENTS', /하드웨어 오류 이벤트\(WHEA\)가/),
+    findIssue(sections, 'EVENTS', /블루스크린\(시스템 충돌\) 기록이/),
+    findIssue(sections, 'EVENTS', /예기치 않은 종료\/재부팅 기록이/),
+  ].filter(Boolean);
+  if (!errorEvents.length) return;
+
+  const changed = [];
+  if (configState.cpu.status === CONFIG_STATUS.MODIFIED) changed.push('CPU 기본 클럭');
+  if (configState.gpu.status === CONFIG_STATUS.MODIFIED) changed.push('GPU 전력 제한');
+  if (configState.memory.status === CONFIG_STATUS.PROFILE_ACTIVE) changed.push('메모리 프로파일');
+  if (!changed.length) return;
+
+  // 오류 이벤트 바로 옆에 둔다 — 사용자가 "왜 블루스크린이 났지"를 볼 때 함께 읽어야 하는 내용이다.
+  const eventsSection = sections.find((s) => s.category === 'EVENTS');
+  if (!eventsSection) return;
+
+  const issue = mkIssue('warning',
+    '설정이 변경된 상태에서 하드웨어 오류 이벤트가 함께 확인됩니다',
+    `${changed.join(' · ')}이(가) 기본값과 다른 상태이고, 최근 Windows 이벤트 로그에 `
+      + `${errorEvents.map((e) => e.title).join(', ')}이(가) 기록돼 있습니다. `
+      + '설정 변경이 원인이라고 단정할 수는 없지만, 두 가지가 함께 나타났으므로 가장 먼저 확인해볼 조합입니다.',
+    ['변경된 설정에서 시스템이 완전히 안정적이지 않을 가능성', '설정과 무관한 별개의 하드웨어 문제', '전원 공급(파워서플라이) 용량 부족'],
+    ['변경된 설정을 일시적으로 기본값으로 되돌린 뒤 며칠 사용하며 같은 오류가 다시 나는지 확인하세요',
+     '안정성 테스트 탭에서 CPU·RAM·GPU 부하 테스트를 실행해 현재 설정에서 오류가 재현되는지 확인하세요',
+     '오류가 사라지면 설정을 한 단계씩만 다시 올리며 어느 지점에서 재발하는지 좁히세요'],
+    CONFIDENCE_SCORE.NEEDS_VERIFICATION,
+    [`변경된 항목: ${changed.join(', ')}`,
+     ...errorEvents.flatMap((e) => e.evidence.slice(0, 1)),
+     '두 사실이 함께 관측됐다는 것까지가 확인된 내용입니다 — 인과관계는 확인되지 않았습니다'],
+    '설정을 기본값으로 되돌린 뒤 며칠 사용하고 전체 진단을 다시 실행해 오류 이벤트가 늘지 않는지 확인하세요.');
+  issue.ruleId = 'CONFIG_STABILITY_INVESTIGATION';
+  issue.ruleVersion = configState.rulesetVersion;
+  issue.confidenceLevel = 'NEEDS_VERIFICATION';
+  issue.actionDetails = issue.actions.map((text) => ({ text, risk: 'SAFE' }));
+
+  eventsSection.issues.push(issue);
+  if (eventsSection.status === 'normal') {
+    eventsSection.status = 'warning';
+    eventsSection.normalEvidence = [];
+  }
+  errorEvents.forEach((e) => e.evidence.push(`설정이 변경된 항목(${changed.join(', ')})이 있어 함께 확인이 필요함`));
+}
+
+function applyCorrelations(sections, configState) {
   const cpuThrottle = findIssue(sections, 'CPU', /CPU 열 스로틀링이 의심됩니다/);
   const gpuThrottle = findIssue(sections, 'GPU', /GPU 열 스로틀링이 의심됩니다/);
   const kernelPower = findIssue(sections, 'EVENTS', /예기치 않은 종료\/재부팅 기록이/);
@@ -1118,10 +1179,13 @@ function applyCorrelations(sections) {
   crossReference(diskEvt, storageBad,
     '저장장치 진단에서도 이상이 확인되어 같은 저장장치 문제일 가능성이 높음',
     '최근 저장장치/파일시스템 오류 이벤트도 함께 확인되어, 문제가 계속 진행 중일 가능성이 높음');
+
+  // 설정 변경 × 하드웨어 오류 이벤트 (기획서 §12)
+  applyConfigStabilityCorrelation(sections, configState);
 }
 
 // ---------- 통합 ----------
-function buildReport({ cpu, cpuTrend, memory, memoryModules, gpu, gpuTrend, storage, network, display, visualChecks, vramCheck, gpuStressCheck, baseline, baselineSnapshot, deepTests, system, symptom, topProcesses, eventLog }) {
+function buildReport({ cpu, cpuTrend, memory, memoryModules, overclockState, gpu, gpuTrend, storage, network, display, visualChecks, vramCheck, gpuStressCheck, baseline, baselineSnapshot, deepTests, system, symptom, topProcesses, eventLog }) {
   // 정밀 검사(부하 테스트)를 돌렸다면 그 결과도 규칙 엔진에 넣는다. 이게 빠져 있으면
   // "RAM 검사에서 오류가 났는데 최종 등급은 정상"이라는 최악의 상황이 생긴다.
   const dt = deepTests && deepTests.included ? deepTests : {};
@@ -1145,10 +1209,15 @@ function buildReport({ cpu, cpuTrend, memory, memoryModules, gpu, gpuTrend, stor
     memUsedPercent: snap && snap.ram ? snap.ram.usedPercent : (memory ? memory.usedPercent : null),
   });
 
+  // 설정 변경(오버클럭/언더볼팅) 상태. 메모리 판정은 memoryConfig가 이미 끝냈으므로
+  // 그 요약을 넘겨서 다시 판정하지 않게 한다.
+  const memorySummary = analyzeMemoryConfig(memoryModules).summary;
+  const configState = analyzeConfiguration({ overclockState, memorySummary });
+
   let sections = [
-    evaluateCpu(cpu, cpuTrend, topProcesses, dt.cpuStress, baselineComparison),
+    evaluateCpu(cpu, cpuTrend, topProcesses, dt.cpuStress, baselineComparison, configState),
     evaluateMemory(memory, topProcesses, dt.ramTest, baselineComparison, memoryModules),
-    evaluateGpu(gpu, gpuTrend, { vramCheck, gpuStressCheck, baselineComparison }),
+    evaluateGpu(gpu, gpuTrend, { vramCheck, gpuStressCheck, baselineComparison, configState }),
     evaluateStorage(storage, dt.storageTest),
     evaluateNetwork(network),
     evaluateDisplay(display, visualChecks),
@@ -1156,7 +1225,7 @@ function buildReport({ cpu, cpuTrend, memory, memoryModules, gpu, gpuTrend, stor
     evaluateEventLogs(eventLog),
   ];
 
-  applyCorrelations(sections);
+  applyCorrelations(sections, configState);
 
   const focus = symptom ? SYMPTOM_FOCUS[symptom] : null;
   if (focus) {
@@ -1193,6 +1262,9 @@ function buildReport({ cpu, cpuTrend, memory, memoryModules, gpu, gpuTrend, stor
     // 화면에서 "평소 대비" 표를 그리는 데 쓴다. 판정은 이미 섹션 이슈에 반영돼 있고
     // 여기 있는 건 같은 데이터의 표시용 사본이다(여기서 다시 판정하면 안 된다).
     baseline: baselineComparison,
+    // 설정 상태 요약(정품/프로파일 적용/변경됨). 중고 거래에서 특히 중요한 정보라
+    // 점검 리포트와 화면이 한눈에 보여줄 수 있게 리포트 최상위에 싣는다.
+    configuration: configState,
     timestamp: new Date().toISOString(),
   };
 }

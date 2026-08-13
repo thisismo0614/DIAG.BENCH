@@ -472,6 +472,92 @@ async function collectLiveSample() {
   };
 }
 
+// ---------- 설정 변경(오버클럭/언더볼팅) 상태 ----------
+// "이 PC가 정품 설정 그대로인가, 누가 손댔는가"를 본다. 중고 거래에서 특히 중요한 정보다.
+//
+// 실측으로 확인한 것(이 PC: Xeon E3-1230 v5 / GTX 1060 3GB):
+//
+//   ✅ 쓸 수 있는 신호
+//     - CPU 모델명에 정품 기본 클럭이 박혀 있다: "... CPU E3-1230 v5 @ 3.40GHz"
+//       ↔ Win32_Processor.MaxClockSpeed = 3401. 둘 다 같은 시스템에서 나오므로 외부
+//       하드웨어 DB 없이 자기들끼리 비교할 수 있다. BCLK를 올리면 MaxClockSpeed가 따라 오른다.
+//     - Win32_Processor.ExtClock = 100 (BCLK). 기본값에서 벗어나면 참고 근거가 된다.
+//     - nvidia-smi의 power.limit vs power.default_limit. 이 PC는 120W = 120W(정품).
+//       다르면 전력 제한이 손대진 것이고, 이건 오해의 여지가 거의 없는 확실한 신호다.
+//
+//   ❌ 쓸 수 없는 것 — 지어내면 안 되는 값들
+//     - Win32_Processor.CurrentVoltage: 이 PC에서 12로 오는데 **전압이 아니다.**
+//       SMBIOS 규격상 8번째 비트(0x80)가 켜져 있을 때만 하위 7비트가 (전압 × 10)이다.
+//       여기선 꺼져 있고 VoltageCaps도 비어 있어 전압을 알 수 없다. 12를 1.2V로 읽으면 오정보다.
+//     - nvidia-smi의 clocks.applications.graphics: 지포스는 [N/A]다(Tesla/Quadro 전용 기능).
+//     - clocks.max.sm(이 PC 1923MHz)만으로는 오버클럭을 판정할 수 없다. 공장 OC 모델은
+//       원래부터 레퍼런스보다 높다. 레퍼런스 값 DB가 없으면 비교 자체가 불가능하므로
+//       **참고 수치로만 남기고 판정에 쓰지 않는다.**
+async function collectOverclockState() {
+  const cpu = {
+    model: null, stockBaseGHz: null, maxClockGHz: null, bclkMHz: null,
+    voltageV: null, voltageReadable: false, readable: false,
+  };
+  const gpu = {
+    supported: false, powerLimitW: null, defaultPowerLimitW: null,
+    minPowerLimitW: null, maxPowerLimitW: null, enforcedPowerLimitW: null,
+    maxClockMHz: null, maxMemClockMHz: null,
+  };
+
+  if (process.platform === 'win32') {
+    const out = await run(
+      'powershell -NoProfile -Command "Get-CimInstance Win32_Processor | Select-Object Name,MaxClockSpeed,ExtClock,CurrentVoltage,VoltageCaps | ConvertTo-Json -Compress"',
+      8000
+    );
+    if (out) {
+      try {
+        const parsed = JSON.parse(out);
+        const p = Array.isArray(parsed) ? parsed[0] : parsed;
+        if (p) {
+          cpu.readable = true;
+          cpu.model = str(p.Name);
+          cpu.maxClockGHz = p.MaxClockSpeed ? round(Number(p.MaxClockSpeed) / 1000, 2) : null;
+          cpu.bclkMHz = Number(p.ExtClock) || null;
+          // 모델명에 박힌 정품 기본 클럭. 없는 CPU도 많다(특히 AMD) — 그러면 비교하지 않는다.
+          const m = /@\s*([\d.]+)\s*GHz/i.exec(cpu.model || '');
+          cpu.stockBaseGHz = m ? Number(m[1]) : null;
+          // 위 주석 참고: 8번째 비트가 켜져 있을 때만 실제 전압이다.
+          const raw = Number(p.CurrentVoltage);
+          if (Number.isFinite(raw) && (raw & 0x80)) {
+            cpu.voltageV = round((raw & 0x7f) / 10, 2);
+            cpu.voltageReadable = true;
+          }
+        }
+      } catch { /* 못 읽으면 readable=false로 남는다 */ }
+    }
+  }
+
+  const nvOut = await run(
+    'nvidia-smi --query-gpu=power.limit,power.default_limit,power.min_limit,power.max_limit,enforced.power.limit,clocks.max.sm,clocks.max.mem --format=csv,noheader,nounits',
+    6000
+  );
+  if (nvOut) {
+    const parts = nvOut.trim().split('\n')[0].split(',').map((s) => s.trim());
+    const num = (v) => {
+      if (v === undefined || /^\[?N\/A\]?$/i.test(v)) return null;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    };
+    if (parts.length >= 7) {
+      gpu.supported = true;
+      gpu.powerLimitW = num(parts[0]);
+      gpu.defaultPowerLimitW = num(parts[1]);
+      gpu.minPowerLimitW = num(parts[2]);
+      gpu.maxPowerLimitW = num(parts[3]);
+      gpu.enforcedPowerLimitW = num(parts[4]);
+      gpu.maxClockMHz = num(parts[5]);
+      gpu.maxMemClockMHz = num(parts[6]);
+    }
+  }
+
+  return { cpu, gpu };
+}
+
 // ---------- 기준선 비교용 사전 스냅샷 ----------
 // 기준선(평소 상태) 비교는 "지금이 유휴인가"에 전적으로 의존한다. 그런데 진단 본작업이
 // 시작되면 **이 앱 자신이** PowerShell·nvidia-smi·SMART 조회를 돌리느라 CPU를 크게 쓴다.
@@ -821,6 +907,7 @@ module.exports = {
   sampleCpuTrend,
   collectMemory,
   collectMemoryModules,
+  collectOverclockState,
   collectGpu,
   sampleGpuTrend,
   collectStorage,
