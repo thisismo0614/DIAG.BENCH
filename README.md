@@ -4,6 +4,14 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-Windows%20x64-lightgrey)
+[![공식 사이트](https://img.shields.io/badge/공식_사이트-diag.bench-1F6FEB)](https://thisismo0614.github.io/DIAG.BENCH/)
+
+### 🌐 [thisismo0614.github.io/DIAG.BENCH](https://thisismo0614.github.io/DIAG.BENCH/)
+
+다운로드, [문제 해결 가이드](https://thisismo0614.github.io/DIAG.BENCH/guides.html),
+[기술 해설](https://thisismo0614.github.io/DIAG.BENCH/learn.html)을 웹에서 바로 볼 수 있습니다.
+
+---
 
 Windows PC의 CPU / GPU / RAM / 저장장치 / 네트워크 / 디스플레이 / 드라이버 상태를
 한 번에 진단하고, 마우스·키보드·모니터·인터넷 개별 테스트까지 한 앱에 통합했습니다.
@@ -24,11 +32,27 @@ Windows PC의 CPU / GPU / RAM / 저장장치 / 네트워크 / 디스플레이 / 
 | **[HANDOFF](HANDOFF.md)** | 이어서 개발할 사람 | 작업 환경 함정과 실측으로 확인된 기술적 사실 |
 | **[RELEASING](docs/RELEASING.md)** | 배포 담당 | 릴리스·서명·사이트 배포 절차 |
 
+사용 설명서와 기술 문서는 **웹에서도 읽을 수 있습니다** —
+[사용 설명서](https://thisismo0614.github.io/DIAG.BENCH/user-guide.html) ·
+[기술 문서](https://thisismo0614.github.io/DIAG.BENCH/technical.html).
+그 외에 앱을 쓰지 않아도 도움이 되도록 쓴 글들이 있습니다.
+
+- **[문제 해결 가이드](https://thisismo0614.github.io/DIAG.BENCH/guides.html)** —
+  메모리 속도, 듀얼 채널, 오버클럭 흔적, 배터리 열화 등 10가지 문제의 원인과 단계별 절차
+- **[기술 해설](https://thisismo0614.github.io/DIAG.BENCH/learn.html)** —
+  [CPU 온도가 안 보이는 이유](https://thisismo0614.github.io/DIAG.BENCH/learn-cpu-temperature.html),
+  [배터리 실제 용량 확인법](https://thisismo0614.github.io/DIAG.BENCH/learn-battery-health.html),
+  [SMART 읽는 법](https://thisismo0614.github.io/DIAG.BENCH/learn-smart.html) 등
+
 ---
 
 ## 다운로드 (Windows)
 
-**[→ 최신 버전 다운로드](../../releases/latest)**
+**[→ 공식 사이트에서 받기](https://thisismo0614.github.io/DIAG.BENCH/download.html)**
+— 최신 버전과 SHA-256 체크섬을 함께 안내합니다.
+
+<sub>GitHub에서 직접 받으려면 [릴리스 목록](../../releases)을 보세요.
+현재 0.x는 전부 사전 릴리스로 발행되므로 `releases/latest`는 목록으로 넘어갑니다.</sub>
 
 공식 배포는 **GitHub Releases**에서만 이루어집니다. 다른 경로로 배포되는 파일은
 이 프로젝트와 무관합니다.
