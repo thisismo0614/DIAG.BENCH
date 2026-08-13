@@ -17,6 +17,16 @@
       </div>
     </div>
 
+    <!-- 표시 모드 (기획서 §18) — 보여줄 양만 바꾸고 판정은 바뀌지 않는다 -->
+    <div class="nav-group">
+      <div class="nav-group-label">표시 모드</div>
+      <div style="display:flex;gap:6px;padding:0 4px;">
+        <button class="nav-item mode-btn" data-mode="basic" style="flex:1;text-align:center;">기본</button>
+        <button class="nav-item mode-btn" data-mode="expert" style="flex:1;text-align:center;">전문가</button>
+      </div>
+      <p class="mini-desc" id="mode-hint" style="padding:6px 8px 0;font-size:11px;line-height:1.4;"></p>
+    </div>
+
     <div class="nav-group">
       <div class="nav-group-label">종합</div>
       <button class="nav-item active" data-target="view-dashboard">대시보드</button>
@@ -46,6 +56,11 @@
     <div class="nav-group">
       <div class="nav-group-label">네트워크</div>
       <button class="nav-item" data-target="view-network">속도 · 핑 테스트</button>
+    </div>
+
+    <!-- 검사 데이터 버전 (기획서 §59) — 어느 버전이 어떤 규칙으로 낸 판정인지 -->
+    <div class="nav-group" style="margin-top:auto;">
+      <p class="mini-desc" id="version-line" style="padding:8px;font-size:10px;line-height:1.5;opacity:.75;"></p>
     </div>
   </div>
 

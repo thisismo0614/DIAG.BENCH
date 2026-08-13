@@ -24,7 +24,8 @@ const STATUS_RANK = { normal: 0, watch: 1, warning: 2, critical: 3 };
 // payload 구조가 바뀌면 예전 리포트의 해시는 당연히 재계산과 달라진다. 그걸 "위변조"로
 // 오해하지 않도록 버전을 payload 안에 넣는다.
 // 3: 섹션에 result(PASS/NOT_TESTED/…)와 notTested를 추가. 페이로드 모양이 바뀌면 올린다.
-const VERIFICATION_PAYLOAD_VERSION = 3;
+// 4: 프로필과 버전 정보(app/engine/ruleset)를 추가.
+const VERIFICATION_PAYLOAD_VERSION = 4;
 
 // ---------- 위변조 감지용 canonical payload ----------
 // 이전 버전은 하드웨어 식별값 + 카테고리 status만 해시했다. 그러면 예를 들어 RAM 검사에서
@@ -104,6 +105,8 @@ function buildVerificationPayload({ issuedAt, hardwareIdentity, diagnosisReport,
     // 어떤 프로필로 검사했는지도 해시에 넣는다. 이게 빠져 있으면 "빠른 점검"으로 받은
     // 결과를 "중고 PC 점검"이었다고 바꿔 적어도 검증을 통과하게 된다.
     profile: diagnosisReport.profile || null,
+    // 버전도 해시에 넣는다(§59). 어느 규칙으로 낸 판정인지가 바뀌면 다른 문서다.
+    versions: diagnosisReport.versions || null,
   });
 }
 
@@ -305,6 +308,9 @@ function buildInspectionReport(diagnosisReport, hardwareIdentity, timestamp, dee
     // 어떤 목적의 검사였는지를 문서 자체가 밝힌다. 같은 "이상 없음"도 프로필에 따라
     // 뜻이 다르므로, 이 값이 없으면 리포트를 제대로 읽을 수 없다.
     profile: profileInfo,
+    // 어느 버전이 어떤 규칙으로 낸 판정인지 (§59). 나중에 규칙이 바뀌어도
+    // 이 문서의 결과를 설명할 수 있어야 한다.
+    versions: diagnosisReport.versions || null,
     gradeExplanation,
     issuedAt,
     validUntil,

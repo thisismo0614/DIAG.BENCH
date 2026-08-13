@@ -1,5 +1,12 @@
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap');
 
+/* 표시 모드 (기획서 §18)
+   기본 모드에서는 전문가용 상세(근거 원시값·판단 근거 강도·Rule ID·버전)를 감춘다.
+   ⚠ 감추는 것은 "상세 근거"뿐이다. 판정 결과와 "검사 안 함" 표시는 두 모드에서 똑같이
+     보인다 — 화면 설정에 따라 같은 PC가 다른 상태로 보이면 안 되기 때문이다. */
+body[data-view-mode="basic"] .expert-only{ display:none !important; }
+.mode-btn.active{ background:var(--accent); color:#fff; border-color:var(--accent); }
+
 :root{
   --bg:#FAFAF9; --surface:#FFFFFF; --ink:#14161A; --ink-soft:#5B5F6A; --ink-faint:#9296A0;
   --line:#E4E6EB; --line-strong:#CDD0D6;

@@ -12,6 +12,8 @@ const { analyzeConfiguration } = require('../src/engine/overclock');
 const { parsePingOutput } = require('../src/engine/collectors');
 const { PROFILES, resolveProfile, listProfiles } = require('../src/engine/profiles');
 const { listIssues, getIssue, wizardFor, RISK_ORDER } = require('../src/engine/issueDb');
+const { versionInfo } = require('../src/engine/version');
+const { sanitize: sanitizeSettings, DEFAULTS: SETTINGS_DEFAULTS } = require('../src/engine/settings');
 const { compareSessions } = require('../src/engine/sessionCompare');
 const { extractMetrics, hardwareKeyOf, scopeKeyOf } = require('../src/engine/sessions');
 const { buildInspectionReport } = require('../src/engine/inspectionReport');
@@ -1979,6 +1981,51 @@ test('프로필 없이 부른 기존 경로는 그대로 동작한다', () => {
   const r = buildReport(baseInput());
   assert.strictEqual(r.profile, null);
   assert.strictEqual(findSection(r, 'CPU').status, 'normal');
+});
+
+// ============================================================
+section('검사 데이터 버전 (기획서 §59) · 표시 모드 설정 (§18)');
+// ============================================================
+
+test('리포트에 앱·엔진·룰셋 버전이 함께 기록된다', () => {
+  const r = buildReport(baseInput());
+  assert.ok(r.versions, '버전 정보가 리포트에 있어야 함');
+  assert.ok(/^\d+\.\d+\.\d+$/.test(r.versions.app), `앱 버전 형식: ${r.versions.app}`);
+  assert.ok(r.versions.engine && r.versions.ruleset);
+  assert.ok(r.versions.label.includes('Diagnostic Engine'), r.versions.label);
+});
+
+test('앱 버전은 package.json과 일치한다', () => {
+  // 손으로 적어두면 릴리스 때마다 어긋난다.
+  assert.strictEqual(versionInfo().app, require('../package.json').version);
+});
+
+test('점검 리포트에도 버전이 실린다', () => {
+  const diagnosisReport = buildReport(baseInput());
+  const inspection = buildInspectionReport(diagnosisReport, { systemSerial: 'S1' }, '2026-08-13T00:00:00Z', { included: false }, {});
+  assert.ok(inspection.versions, '성적서가 어느 버전의 판정인지 밝혀야 함');
+  assert.strictEqual(inspection.versions.ruleset, versionInfo().ruleset);
+});
+
+test('버전을 바꿔치기하면 검증에 실패한다', () => {
+  // 다른 규칙 버전의 판정을 이 버전 것이라고 주장하면 안 된다.
+  const diagnosisReport = buildReport(baseInput());
+  const inspection = buildInspectionReport(diagnosisReport, { systemSerial: 'S1' }, '2026-08-13T00:00:00Z', { included: false }, {});
+  assert.ok(verifyInspectionReport(inspection));
+  const tampered = JSON.parse(JSON.stringify(inspection));
+  tampered.diagnosisReport.versions.ruleset = '2099.01.1';
+  assert.ok(!verifyInspectionReport(tampered));
+});
+
+test('표시 모드는 알려진 값만 받아들인다', () => {
+  // 파일이나 렌더러에서 오는 값을 그대로 믿지 않는다.
+  assert.deepStrictEqual(sanitizeSettings({ viewMode: 'expert' }), { viewMode: 'expert' });
+  assert.deepStrictEqual(sanitizeSettings({ viewMode: 'god-mode' }), {});
+  assert.deepStrictEqual(sanitizeSettings({ 판정: '전부정상' }), {}, '모르는 키는 무시해야 함');
+});
+
+test('기본값은 basic이다', () => {
+  assert.strictEqual(SETTINGS_DEFAULTS.viewMode, 'basic');
 });
 
 // ============================================================

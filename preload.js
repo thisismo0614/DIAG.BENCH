@@ -18,6 +18,10 @@ contextBridge.exposeInMainWorld('diagAPI', {
   getGpuStressCheck: () => ipcRenderer.invoke('get-gpu-stress-check'),
   saveGpuStressCheck: (payload) => ipcRenderer.invoke('save-gpu-stress-check', payload),
 
+  getSettings: () => ipcRenderer.invoke('get-settings'),
+  saveSettings: (patch) => ipcRenderer.invoke('save-settings', patch),
+  getVersions: () => ipcRenderer.invoke('get-versions'),
+
   listProfiles: () => ipcRenderer.invoke('list-profiles'),
   runProfile: (opts) => ipcRenderer.invoke('run-profile', opts),
 

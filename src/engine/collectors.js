@@ -9,6 +9,10 @@ const os = require('os');
 const path = require('path');
 const fs = require('fs');
 
+// ⚠ PowerShell 호출에는 반드시 `[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;`을
+//   앞에 붙일 것. 한국어 Windows에서는 PowerShell이 CP949로 출력해서 Node가 읽으면 깨진다.
+//   실측: 드라이버 이름이 "SM 버스 컨트롤러" → "SM ���� ��Ʈ�ѷ�"로 화면과 리포트에 그대로 나갔다.
+//   chcp 65001도 되지만 콘솔 전역 설정을 바꾸므로 호출별로 지정하는 위 방식을 쓴다.
 function run(cmd, timeoutMs = 4000) {
   return new Promise((resolve) => {
     exec(cmd, { timeout: timeoutMs, windowsHide: true }, (err, stdout) => {
@@ -333,7 +337,7 @@ async function collectMemoryModules() {
   if (process.platform !== 'win32') return { ...unsupported, error: 'Windows에서만 조회할 수 있습니다.' };
 
   const out = await run(
-    'powershell -NoProfile -Command "Get-CimInstance Win32_PhysicalMemory | Select-Object BankLabel,DeviceLocator,Manufacturer,PartNumber,Capacity,Speed,ConfiguredClockSpeed,ConfiguredVoltage,SMBIOSMemoryType,FormFactor,SerialNumber | ConvertTo-Json -Compress"',
+    'powershell -NoProfile -Command "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; Get-CimInstance Win32_PhysicalMemory | Select-Object BankLabel,DeviceLocator,Manufacturer,PartNumber,Capacity,Speed,ConfiguredClockSpeed,ConfiguredVoltage,SMBIOSMemoryType,FormFactor,SerialNumber | ConvertTo-Json -Compress"',
     8000
   );
   if (!out) return { ...unsupported, error: '메모리 모듈 정보를 조회하지 못했습니다.' };
@@ -351,7 +355,7 @@ async function collectMemoryModules() {
   let totalSlots = null;
   let maxCapacityGB = null;
   const arrOut = await run(
-    'powershell -NoProfile -Command "Get-CimInstance Win32_PhysicalMemoryArray | Select-Object MemoryDevices,MaxCapacityEx | ConvertTo-Json -Compress"',
+    'powershell -NoProfile -Command "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; Get-CimInstance Win32_PhysicalMemoryArray | Select-Object MemoryDevices,MaxCapacityEx | ConvertTo-Json -Compress"',
     6000
   );
   if (arrOut) {
@@ -506,7 +510,7 @@ async function collectOverclockState() {
 
   if (process.platform === 'win32') {
     const out = await run(
-      'powershell -NoProfile -Command "Get-CimInstance Win32_Processor | Select-Object Name,MaxClockSpeed,ExtClock,CurrentVoltage,VoltageCaps | ConvertTo-Json -Compress"',
+      'powershell -NoProfile -Command "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; Get-CimInstance Win32_Processor | Select-Object Name,MaxClockSpeed,ExtClock,CurrentVoltage,VoltageCaps | ConvertTo-Json -Compress"',
       8000
     );
     if (out) {
@@ -753,7 +757,7 @@ async function collectSystem() {
   let driverQueryOk = false;
   if (isWindows) {
     const out = await run(
-      'powershell -NoProfile -Command "Get-PnpDevice -Status Error | Select-Object -Property FriendlyName,InstanceId | ConvertTo-Json"',
+      'powershell -NoProfile -Command "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; Get-PnpDevice -Status Error | Select-Object -Property FriendlyName,InstanceId | ConvertTo-Json"',
       6000
     );
     if (out !== null) {
@@ -833,6 +837,7 @@ async function collectEventLogs(days = 7, maxEvents = 50) {
   }
 
   const script = `
+    [Console]::OutputEncoding=[System.Text.Encoding]::UTF8;
     $providers = @('Microsoft-Windows-Kernel-Power','Microsoft-Windows-WHEA-Logger','disk','Ntfs','Display','BugCheck');
     $sys = @(Get-WinEvent -FilterHashtable @{LogName='System'; ProviderName=$providers; StartTime=(Get-Date).AddDays(-${days})} -ErrorAction SilentlyContinue);
     $app = @(Get-WinEvent -FilterHashtable @{LogName='Application'; ProviderName='Application Error'; StartTime=(Get-Date).AddDays(-${days})} -ErrorAction SilentlyContinue);

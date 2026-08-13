@@ -15,6 +15,7 @@ const { analyzeConfiguration, STATUS: CONFIG_STATUS } = require('./overclock');
 const { RESULT, RESULT_LABEL, deriveResult, summarizeResults } = require('./resultStatus');
 const { resolveProfile, profileSkips } = require('./profiles');
 const { knowledge, wizardFor } = require('./issueDb');
+const { versionInfo } = require('./version');
 
 // 진단 신뢰도의 어휘. 숫자만으로는 "무엇을 근거로 이 정도 확신을 하는가"가 드러나지 않는다.
 //   CONFIRMED          실제 오류/사실이 측정으로 확인됨
@@ -1361,6 +1362,9 @@ function buildReport({ cpu, cpuTrend, memory, memoryModules, overclockState, gpu
     resultSummary,
     // 검사하지 못한 항목 전체 목록 (기획서 §37 — 검사 범위 공개).
     notTested: sections.flatMap((s) => (s.notTested || []).map((n) => ({ category: s.category, item: n }))),
+    // 어느 버전이 어떤 규칙으로 낸 판정인지 (기획서 §59). 규칙이 바뀌어도 과거 결과를
+    // 설명할 수 있어야 하므로 리포트 자체에 박아둔다.
+    versions: versionInfo(),
     timestamp: new Date().toISOString(),
   };
 }

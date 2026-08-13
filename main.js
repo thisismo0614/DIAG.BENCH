@@ -11,6 +11,8 @@ const baselineStore = require('./src/engine/baselineStore');
 const { summarizeBaselineSamples, MIN_SAMPLES } = require('./src/engine/baseline');
 const { resolveProfile, listProfiles, PROFILES } = require('./src/engine/profiles');
 const sessions = require('./src/engine/sessions');
+const settings = require('./src/engine/settings');
+const { versionInfo } = require('./src/engine/version');
 const { compareSessions } = require('./src/engine/sessionCompare');
 const { buildComparison } = require('./src/engine/compare');
 const { buildHtmlReport } = require('./src/engine/report');
@@ -357,6 +359,13 @@ const SKIPPED = {
   overclockState: () => ({ cpu: { readable: false, voltageReadable: false }, gpu: { supported: false } }),
   gpu: () => ({ controllers: [], nvidia: null, supported: false }),
 };
+
+// ================= 표시 모드 (기본/전문가) =================
+// 기획서 §18. 보여줄 양만 바꾸고 판정은 건드리지 않는다(settings.js 주석 참고).
+ipcMain.handle('get-settings', () => settings.loadSettings(app.getPath('userData')));
+ipcMain.handle('save-settings', (event, patch = {}) => settings.saveSettings(app.getPath('userData'), patch));
+// 리포트에 박아둔 버전과 같은 값을 화면에서도 쓸 수 있게 한다 (기획서 §59).
+ipcMain.handle('get-versions', () => versionInfo());
 
 ipcMain.handle('list-profiles', () => listProfiles());
 

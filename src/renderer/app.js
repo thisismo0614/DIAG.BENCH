@@ -77,6 +77,25 @@ function badgeLabel(status) {
   return status;
 }
 
+// ⚠ 대시보드 뱃지는 status가 아니라 result로 그린다.
+//   status는 네 단계(critical/warning/watch/normal)뿐이라, 측정조차 못 한 카테고리도
+//   normal로 내려온다. 엔진에서는 이미 NOT_TESTED로 구분하도록 고쳤는데 화면이 계속
+//   status를 보고 있어서, 검사도 안 한 항목이 초록색 "정상"으로 표시되고 있었다.
+//   판정을 감추는 표시 계층 버그는 엔진 버그와 똑같이 위험하다.
+const RESULT_BADGE = {
+  PASS: { cls: 'normal', text: '정상' },
+  WARNING: { cls: 'warning', text: '주의' },
+  ERROR: { cls: 'critical', text: '오류 확인됨' },
+  CRITICAL: { cls: 'critical', text: '위험' },
+  NOT_TESTED: { cls: 'watch', text: '검사 안 함' },
+  UNKNOWN: { cls: 'watch', text: '판단 보류' },
+};
+function resultBadge(section) {
+  const b = RESULT_BADGE[section.result];
+  if (b) return b;
+  return { cls: section.status, text: badgeLabel(section.status) };
+}
+
 function renderReport(report) {
   headlineText.textContent = report.headline;
   document.getElementById('headline-eyebrow').textContent = `진단 결과 · ${report.symptomLabel}`;
@@ -89,8 +108,9 @@ function renderReport(report) {
     cell.className = 'health-cell';
     cell.innerHTML = `
       <div class="cat">${catLabelKo[s.category] || s.category}${s.focused ? '<span class="focused-tag">우선확인</span>' : ''}</div>
-      <span class="health-badge ${s.status}">${badgeLabel(s.status)}</span>
-      ${s.status === 'normal' && s.normalEvidence.length ? `<div class="normal-evidence">${s.normalEvidence.join(' · ')}</div>` : ''}
+      <span class="health-badge ${resultBadge(s).cls}">${resultBadge(s).text}</span>
+      ${s.result === 'NOT_TESTED' && s.note ? `<div class="normal-evidence">${escHtml(s.note)}</div>` : ''}
+      ${s.result === 'PASS' && s.normalEvidence.length ? `<div class="normal-evidence expert-only">${s.normalEvidence.join(' · ')}</div>` : ''}
     `;
     healthGrid.appendChild(cell);
   });
@@ -110,12 +130,12 @@ function renderReport(report) {
         <div class="detail-head">
           <span class="health-badge ${issue.level}">${badgeLabel(issue.level)}</span>
           <span class="detail-cat">${catLabelKo[s.category] || s.category}</span>
-          ${issue.confidence !== null ? `<span class="confidence-chip ${issue.confidenceLabel.replace(' ', '_')}" title="이 판정을 뒷받침하는 근거가 얼마나 많고 서로 일치하는지를 나타냅니다. 통계적 확률이 아니라 규칙 기반 점수입니다.">판단 근거 강도 ${issue.confidenceLabel}</span>` : ''}
+          ${issue.confidence !== null ? `<span class="confidence-chip expert-only ${issue.confidenceLabel.replace(' ', '_')}" title="이 판정을 뒷받침하는 근거가 얼마나 많고 서로 일치하는지를 나타냅니다. 통계적 확률이 아니라 규칙 기반 점수입니다.">판단 근거 강도 ${issue.confidenceLabel}</span>` : ''}
         </div>
         <div class="detail-title">${issue.title}</div>
         <div class="detail-explain">${issue.explanation}</div>
         <div class="detail-cols">
-          <div class="detail-col"><div class="detail-col-label">가능한 원인</div><ul>${issue.causes.map((c) => `<li>${c}</li>`).join('')}</ul></div>
+          <div class="detail-col expert-only"><div class="detail-col-label">가능한 원인</div><ul>${issue.causes.map((c) => `<li>${c}</li>`).join('')}</ul></div>
           <div class="detail-col"><div class="detail-col-label">권장 조치</div><ul>${renderActions(issue)}</ul></div>
         </div>
         ${renderWizard(issue)}
@@ -124,7 +144,8 @@ function renderReport(report) {
             <div class="detail-col-label">점유율 높은 프로세스</div>
             ${issue.topProcesses.map((p) => `<div class="process-row"><span>${p.name} <span class="pid">#${p.pid}</span></span><span>CPU ${p.cpuPercent}% · MEM ${p.memPercent}%</span></div>`).join('')}
           </div>` : ''}
-        ${issue.evidence.length ? `<div class="detail-evidence">근거: ${issue.evidence.join(' · ')}</div>` : ''}
+        ${issue.evidence.length ? `<div class="detail-evidence expert-only">근거: ${issue.evidence.join(' · ')}</div>` : ''}
+        ${issue.ruleId ? `<div class="detail-evidence expert-only">규칙 ${issue.ruleId} (v${issue.ruleVersion || '?'})${issue.confidenceLevel ? ` · 신뢰도 ${issue.confidenceLevel}` : ''}</div>` : ''}
         ${issue.verification ? `<div class="detail-verify"><b>재검사 방법:</b> ${issue.verification}</div>` : ''}
         ${issue.code === 'smart-unknown' ? `
           <div class="detail-actions">
@@ -330,6 +351,45 @@ document.getElementById('history-clear-btn').addEventListener('click', async () 
   loadHistoryView();
 });
 document.querySelector('[data-target="view-history"]').addEventListener('click', loadHistoryView);
+
+/* ============================================================
+   표시 모드 (기획서 §18) · 검사 데이터 버전 (§59)
+   ------------------------------------------------------------
+   ⚠ 모드는 **보여줄 양**만 바꾼다. 판정 결과는 두 모드에서 완전히 같다.
+     특히 "검사 안 함"은 기본 모드에서도 그대로 보인다 — 상세 근거는 접어도,
+     확인되지 않았다는 사실 자체를 감추면 이 프로그램의 존재 이유가 사라진다.
+============================================================ */
+const MODE_HINT = {
+  basic: '결과와 해결 방법 위주로 보여줍니다. 판정은 전문가 모드와 완전히 같습니다.',
+  expert: '측정 원시값, 판단 근거, 적용된 규칙 ID와 버전까지 함께 보여줍니다.',
+};
+
+function applyViewMode(mode) {
+  document.body.dataset.viewMode = mode;
+  document.querySelectorAll('.mode-btn').forEach((b) => b.classList.toggle('active', b.dataset.mode === mode));
+  const hint = document.getElementById('mode-hint');
+  if (hint) hint.textContent = MODE_HINT[mode] || '';
+}
+
+document.querySelectorAll('.mode-btn').forEach((btn) => {
+  btn.addEventListener('click', async () => {
+    const saved = await window.diagAPI.saveSettings({ viewMode: btn.dataset.mode });
+    applyViewMode(saved.viewMode);
+  });
+});
+
+(async () => {
+  const s = await window.diagAPI.getSettings();
+  applyViewMode(s.viewMode);
+  const v = await window.diagAPI.getVersions();
+  const el = document.getElementById('version-line');
+  // 버전은 전문가 모드에서만 노출한다 — 일반 사용자에게는 의미가 없고,
+  // 리포트에는 모드와 무관하게 항상 기록된다.
+  if (el) {
+    el.classList.add('expert-only');
+    el.innerHTML = `DiagBench ${escHtml(v.app)}<br>Diagnostic Engine ${escHtml(v.engine)}<br>Rule Set ${escHtml(v.ruleset)}`;
+  }
+})();
 
 /* ============================================================
    조치 위험도(§14) · 해결 Wizard(§44) · 안전 안내(§45)
