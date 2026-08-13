@@ -112,6 +112,9 @@ function renderReport(report) {
       ${s.result === 'NOT_TESTED' && s.note ? `<div class="normal-evidence">${escHtml(s.note)}</div>` : ''}
       ${s.result === 'PASS' && s.normalEvidence.length ? `<div class="normal-evidence">${s.normalEvidence.join(' · ')}</div>` : ''}
       ${s.issues.length ? `<div class="normal-evidence">${s.issues.map((i) => escHtml(i.title)).join(' · ')}</div>` : ''}
+      ${s.cpuTempReason === 'permission' ? `
+        <div class="normal-evidence">CPU 온도는 관리자 권한이 있어야 읽을 수 있습니다.</div>
+        <button class="btn btn-cpu-temp-retry" style="margin-top:6px;padding:4px 10px;font-size:12px;">관리자 권한으로 온도 측정</button>` : ''}
     `;
     healthGrid.appendChild(cell);
   });
@@ -158,6 +161,33 @@ function renderReport(report) {
     });
   });
 }
+
+// CPU 온도는 WMI 클래스가 관리자 권한을 요구해서 비관리자 실행에서는 읽히지 않는다.
+// SMART 재검사와 같은 절충안 — 앱 전체를 승격하지 않고 이 조회 하나만 UAC 승인을 받는다.
+healthGrid.addEventListener('click', async (e) => {
+  const btn = e.target.closest('.btn-cpu-temp-retry');
+  if (!btn || !lastRaw || !lastReport) return;
+  btn.disabled = true;
+  btn.textContent = '승인 창을 확인하세요...';
+  try {
+    const res = await window.diagAPI.retryCpuTempElevated({ raw: lastRaw, symptom: lastReport.symptom });
+    if (res.measured) {
+      // 온도가 들어왔으니 리포트를 정정된 값으로 다시 그린다.
+      lastReport = res.report;
+      lastRaw = res.raw;
+      lastReport.comparison = null;
+      renderReport(lastReport);
+    } else {
+      btn.disabled = false;
+      btn.textContent = res.reason === 'permission'
+        ? '취소됨 — 다시 시도'
+        : '이 메인보드는 온도를 노출하지 않습니다';
+    }
+  } catch {
+    btn.disabled = false;
+    btn.textContent = '측정 실패 — 다시 시도';
+  }
+});
 
 // SMART를 못 읽은 장치 카드에서 "관리자 권한으로 재검사"를 누르면, 그 장치 하나에 대해서만
 // UAC 승인을 받아 smartctl을 재실행한다. 앱 전체를 관리자 권한으로 띄우지 않기 위한 절충안.

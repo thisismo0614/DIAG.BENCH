@@ -1047,7 +1047,7 @@ test('원인을 PSU로 단정하지 않는다', () => {
 // ============================================================
 section('SMART 속성 파싱 (실제 smartctl 출력 형식)');
 // ============================================================
-const { parseSmartAttributes, parseSmartIdentity, parseSmartHealthOutput, parseAtaSmart, parseBatteryReport } = require('../src/engine/collectors');
+const { parseSmartAttributes, parseSmartIdentity, parseSmartHealthOutput, parseAtaSmart, parseBatteryReport, parseThermalZones } = require('../src/engine/collectors');
 
 // 배터리 A+ 등급 테스트용 — 통과하는 정밀 검사 결과
 const passingCpuStressForGrade = {
@@ -1995,6 +1995,78 @@ test('프로필 없이 부른 기존 경로는 그대로 동작한다', () => {
   const r = buildReport(baseInput());
   assert.strictEqual(r.profile, null);
   assert.strictEqual(findSection(r, 'CPU').status, 'normal');
+});
+
+// ============================================================
+section('CPU 온도 — "센서 없음"과 "권한 없음"을 구분한다');
+// ============================================================
+// 실측: 데스크톱과 노트북 2대 모두 si.cpuTemperature()가 null이었는데,
+// 원인은 센서 부재가 아니라 MSAcpi_ThermalZoneTemperature의 **관리자 권한 요구**였다.
+// 관리자 PowerShell에서는 같은 쿼리가 온도를 정상 반환한다.
+
+test('열 영역 응답에서 가장 높은 값을 쓰고 어느 영역인지 남긴다', () => {
+  const out = JSON.stringify({ zones: [
+    { zone: '\\_TZ.TZ00', c: 42.5 }, { zone: '\\_TZ.TZ01', c: 55.1 },
+  ] });
+  const r = parseThermalZones(out);
+  assert.strictEqual(r.tempC, 55.1);
+  assert.strictEqual(r.zone, '\\_TZ.TZ01');
+  assert.strictEqual(r.zones.length, 2);
+  assert.strictEqual(r.source, 'acpi-thermal-zone');
+});
+
+test('말이 안 되는 온도는 버린다', () => {
+  // 0K나 비정상적으로 높은 값이 오는 보드가 있다. 그대로 쓰면 없는 과열을 만들어낸다.
+  assert.strictEqual(parseThermalZones(JSON.stringify({ zones: [{ zone: 'x', c: -273.1 }] })), null);
+  assert.strictEqual(parseThermalZones(JSON.stringify({ zones: [{ zone: 'x', c: 999 }] })), null);
+  assert.strictEqual(parseThermalZones('{}'), null);
+  assert.strictEqual(parseThermalZones(null), null);
+});
+
+test('[핵심] 권한 때문에 못 읽은 것을 "센서 없음"이라고 하지 않는다', () => {
+  const r = buildReport(baseInput({
+    cpu: { model: 'Test CPU', loadPercent: 10, tempC: null, tempReason: 'permission', clockGHz: 3.5 },
+  }));
+  const cpu = findSection(r, 'CPU');
+  const note = cpu.notTested.find((n) => n.includes('CPU 온도'));
+  assert.ok(/관리자 권한/.test(note), `사유를 정확히 적어야 함: ${note}`);
+  assert.ok(!/센서/.test(note), '권한 문제인데 센서 얘기를 하면 안 됨');
+  assert.strictEqual(cpu.cpuTempReason, 'permission', '화면이 재측정 버튼을 띄울 수 있어야 함');
+});
+
+test('보드가 정말 노출하지 않는 경우는 그렇게 적는다', () => {
+  const r = buildReport(baseInput({
+    cpu: { model: 'Test CPU', loadPercent: 10, tempC: null, tempReason: 'not-supported', clockGHz: 3.5 },
+  }));
+  const note = findSection(r, 'CPU').notTested.find((n) => n.includes('CPU 온도'));
+  assert.ok(/노출하지 않음/.test(note), note);
+  assert.ok(!/관리자 권한/.test(note), '권한 문제가 아닌데 권한 얘기를 하면 안 됨');
+});
+
+test('ACPI에서 읽은 온도는 출처를 밝힌다', () => {
+  // ACPI 열 영역은 CPU 패키지 온도와 정확히 같지 않을 수 있다(칩셋 영역일 수도).
+  const r = buildReport(baseInput({
+    cpu: { model: 'Test CPU', loadPercent: 10, tempC: 47, tempReason: 'ok', tempSource: 'acpi-thermal-zone', tempZone: '\\_TZ.TZ00', clockGHz: 3.5 },
+  }));
+  const ev = findSection(r, 'CPU').normalEvidence.join(' ');
+  assert.ok(/ACPI 열 영역 기준/.test(ev), ev);
+});
+
+test('온도를 읽었으면 기존 온도 판정이 그대로 동작한다', () => {
+  // 권한 승격으로 온도가 들어오면 임계값 판정이 살아나야 한다.
+  const r = buildReport(baseInput({
+    cpu: { model: 'Test CPU', loadPercent: 90, tempC: 96, tempReason: 'ok', tempSource: 'acpi-thermal-zone', clockGHz: 4 },
+  }));
+  assert.strictEqual(findSection(r, 'CPU').status, 'critical');
+});
+
+test('온도를 읽으면 재측정 버튼 조건이 사라진다', () => {
+  const r = buildReport(baseInput({
+    cpu: { model: 'Test CPU', loadPercent: 10, tempC: 45, tempReason: 'ok', clockGHz: 3.5 },
+  }));
+  const cpu = findSection(r, 'CPU');
+  assert.strictEqual(cpu.cpuTempReason, 'ok');
+  assert.ok(!cpu.notTested.some((n) => n.includes('CPU 온도')));
 });
 
 // ============================================================

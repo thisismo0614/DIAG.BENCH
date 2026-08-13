@@ -151,6 +151,24 @@ ipcMain.handle('retry-smart-elevated', async (event, { device, smartType, raw, s
   return { report, raw: newRaw };
 });
 
+// ================= CPU 온도 관리자 권한 재측정 =================
+// SMART 재검사와 같은 구조다. 앱 전체를 관리자 권한으로 띄우지 않고, 이 한 가지 조회만
+// UAC 승인을 받아 다시 한다. 온도가 들어오면 그 값으로 리포트를 다시 만든다
+// (새 진단이 아니라 "정정"이므로 comparison과 히스토리는 건드리지 않는다).
+ipcMain.handle('retry-cpu-temp-elevated', async (event, { raw, symptom } = {}) => {
+  const result = await collectors.collectCpuTemperatureElevated();
+  const newCpu = {
+    ...raw.cpu,
+    tempC: result.tempC,
+    tempReason: result.reason,
+    tempSource: result.tempC !== null ? result.source : raw.cpu.tempSource,
+    tempZone: result.zone || null,
+  };
+  const newRaw = { ...raw, cpu: newCpu };
+  const report = buildReport({ ...newRaw, symptom });
+  return { report, raw: newRaw, measured: result.tempC !== null, reason: result.reason };
+});
+
 // ================= 디스플레이 셀프체크 기록 =================
 // 불량화소/잔상/균일도는 사람이 눈으로 봐야 판단할 수 있어 자동 검사가 불가능하다.
 // 사용자가 "디스플레이 테스트" 화면에서 직접 본 결과를 기록하면, 그 값을 전체 진단의

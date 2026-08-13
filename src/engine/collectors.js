@@ -291,6 +291,104 @@ async function retrySmartElevated(device, type) {
   return { device, ...parseSmartHealthOutput(out) };
 }
 
+// ---------- CPU 온도 ----------
+// ⚠ 실측으로 확인한 사실 (개발 데스크톱 + 사용자 노트북, 2대 모두 동일):
+//   `si.cpuTemperature()`가 null을 돌려주는 이유는 **센서가 없어서가 아니라 권한 때문**이다.
+//   systeminformation이 쓰는 WMI 클래스 `MSAcpi_ThermalZoneTemperature`는
+//   **관리자 권한을 요구한다.** 비관리자로 조회하면 "액세스가 거부되었습니다"가 뜬다.
+//   (클래스 자체는 존재한다 — Get-CimClass로 확인)
+//   관리자 PowerShell에서는 같은 쿼리가 온도 값을 정상 반환하는 것을 확인했다.
+//
+//   그래서 "센서 없음"과 "권한 없음"을 반드시 구분한다. 사용자가 취할 행동이 다르다 —
+//   전자는 어쩔 수 없고, 후자는 관리자 권한으로 다시 재면 된다.
+
+const TEMP_REASON = {
+  OK: 'ok',
+  PERMISSION: 'permission',     // 관리자 권한이 없어 거부됨 → 승격하면 읽을 수 있다
+  NOT_SUPPORTED: 'not-supported', // 권한이 있어도 값이 없다(보드가 ACPI로 노출하지 않음)
+  UNKNOWN: 'unknown',
+};
+
+// ACPI 열 영역 온도를 읽는 PowerShell 스크립트. 승격 여부와 무관하게 같은 쿼리를 쓴다.
+// CurrentTemperature는 10분의 1 켈빈 단위다.
+const THERMAL_QUERY =
+  '$z = Get-CimInstance -Namespace root\\wmi -ClassName MSAcpi_ThermalZoneTemperature -ErrorAction Stop; '
+  + '$r = @($z | ForEach-Object { [PSCustomObject]@{ zone = $_.InstanceName; c = [math]::Round(($_.CurrentTemperature/10)-273.15,1) } }); '
+  + 'ConvertTo-Json -InputObject @{ zones = $r } -Compress';
+
+function parseThermalZones(out) {
+  if (!out) return null;
+  try {
+    // ⚠ Windows PowerShell의 `Out-File -Encoding utf8`은 **BOM을 붙인다.**
+    //   BOM이 남아 있으면 JSON.parse가 그대로 던진다. 승격 경로가 이 때문에 조용히
+    //   실패하지 않도록 앞에서 걷어낸다.
+    const parsed = JSON.parse(out.replace(/^﻿/, '').trim());
+    const zones = (Array.isArray(parsed.zones) ? parsed.zones : (parsed.zones ? [parsed.zones] : []))
+      .map((z) => ({ zone: str(z.zone), tempC: Number(z.c) }))
+      .filter((z) => Number.isFinite(z.tempC) && z.tempC > 0 && z.tempC < 150);
+    if (!zones.length) return null;
+    // 여러 열 영역이 잡히면 가장 높은 값을 쓴다. 어느 영역인지도 함께 남겨서
+    // "CPU 패키지 온도"라고 단정하지 않는다(ACPI 열 영역은 칩셋일 수도 있다).
+    const hottest = zones.reduce((a, b) => (b.tempC > a.tempC ? b : a));
+    return { tempC: hottest.tempC, zone: hottest.zone, zones, source: 'acpi-thermal-zone' };
+  } catch {
+    return null;
+  }
+}
+
+// 비승격 상태에서 시도해보고, 실패했다면 그 이유를 분류한다.
+async function probeCpuTemperature() {
+  if (process.platform !== 'win32') return { tempC: null, reason: TEMP_REASON.NOT_SUPPORTED, zones: [] };
+  const { out, err } = await new Promise((resolve) => {
+    exec(
+      `powershell -NoProfile -Command "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; ${THERMAL_QUERY}"`,
+      { timeout: 8000, windowsHide: true },
+      (e, stdout, stderr) => resolve({ out: stdout ? stdout.toString() : null, err: stderr ? stderr.toString() : '' })
+    );
+  });
+
+  const parsed = parseThermalZones(out);
+  if (parsed) return { ...parsed, reason: TEMP_REASON.OK };
+
+  // "액세스가 거부되었습니다" / "Access is denied" — 언어에 의존하지 않도록 두 가지를 다 본다.
+  // (한국어 Windows에서 실제로 확인한 문구)
+  if (/액세스가 거부|Access is denied|UnauthorizedAccess|0x80070005/i.test(err)) {
+    return { tempC: null, reason: TEMP_REASON.PERMISSION, zones: [] };
+  }
+  if (err && err.trim()) return { tempC: null, reason: TEMP_REASON.UNKNOWN, zones: [], error: err.trim().slice(0, 200) };
+  return { tempC: null, reason: TEMP_REASON.NOT_SUPPORTED, zones: [] };
+}
+
+// 관리자 권한으로 승격해서 온도를 읽는다(UAC 승인 필요).
+// SMART 재검사와 같은 방식 — cmd.exe를 승격 실행하고 출력을 임시 파일로 받는다.
+function collectCpuTemperatureElevated(timeoutMs = 60000) {
+  return new Promise((resolve) => {
+    if (process.platform !== 'win32') return resolve({ tempC: null, reason: TEMP_REASON.NOT_SUPPORTED, zones: [] });
+    const tmpOut = path.join(os.tmpdir(), `diagbench-temp-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
+    const q = (s) => `"${String(s).replace(/"/g, '""')}"`;
+    // 승격된 powershell이 쿼리 결과를 파일로 쓴다. cmd 리다이렉션 이스케이프를 피하려고
+    // Out-File을 쓴다(SMART 쪽 주석 참고 — 여러 겹 이스케이프는 깨지기 쉽다).
+    const inner = `${THERMAL_QUERY} | Out-File -FilePath ${q(tmpOut)} -Encoding utf8`;
+    const encodedInner = Buffer.from(inner, 'utf16le').toString('base64');
+    const psScript = `Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile','-EncodedCommand',${psSingleQuote(encodedInner)} -Verb RunAs -WindowStyle Hidden -Wait`;
+    const encoded = Buffer.from(psScript, 'utf16le').toString('base64');
+    execFile(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
+      { timeout: timeoutMs, windowsHide: true },
+      () => {
+        let out = null;
+        try { out = fs.readFileSync(tmpOut, 'utf-8'); } catch { out = null; }
+        try { fs.unlinkSync(tmpOut); } catch {}
+        const parsed = parseThermalZones(out);
+        // UAC를 취소하면 파일이 생기지 않는다 → 거부된 것으로 본다(값을 지어내지 않는다).
+        resolve(parsed ? { ...parsed, reason: TEMP_REASON.OK, elevated: true }
+          : { tempC: null, reason: out === null ? TEMP_REASON.PERMISSION : TEMP_REASON.NOT_SUPPORTED, zones: [], elevated: true });
+      }
+    );
+  });
+}
+
 // ---------- CPU ----------
 async function collectCpu() {
   const [load, temp, speed, staticInfo] = await Promise.all([
@@ -299,13 +397,33 @@ async function collectCpu() {
     si.cpuCurrentSpeed(),
     si.cpu(),
   ]);
+  // systeminformation이 온도를 못 읽었으면 **왜 못 읽었는지**를 따로 확인한다.
+  // "센서 없음"과 "권한 없음"은 사용자가 취할 행동이 완전히 다르다(위 주석 참고).
+  let tempC = temp.main ?? null;
+  let tempReason = tempC !== null ? TEMP_REASON.OK : TEMP_REASON.UNKNOWN;
+  let tempSource = tempC !== null ? 'systeminformation' : null;
+  let tempZone = null;
+  if (tempC === null) {
+    const probe = await probeCpuTemperature();
+    tempReason = probe.reason;
+    if (probe.tempC !== null) {
+      tempC = probe.tempC;
+      tempSource = probe.source;
+      tempZone = probe.zone;
+    }
+  }
+
   return {
     model: `${staticInfo.manufacturer} ${staticInfo.brand}`.trim(),
     cores: staticInfo.cores,
     physicalCores: staticInfo.physicalCores,
     loadPercent: round(load.currentLoad),
     perCoreLoad: load.cpus ? load.cpus.map((c) => round(c.load)) : [],
-    tempC: temp.main ?? null, // null이면 센서 미지원(가상머신/일부 노트북)
+    tempC,
+    // 온도를 못 읽었을 때의 사유. 'permission'이면 관리자 권한으로 다시 잴 수 있다.
+    tempReason,
+    tempSource,
+    tempZone,
     clockGHz: speed.avg ?? null,
     clockMaxGHz: staticInfo.speedMax ?? null,
   };
@@ -1095,6 +1213,9 @@ module.exports = {
   collectMemoryModules,
   collectOverclockState,
   collectBattery,
+  probeCpuTemperature,
+  collectCpuTemperatureElevated,
+  TEMP_REASON,
   collectGpu,
   sampleGpuTrend,
   collectStorage,
@@ -1114,4 +1235,5 @@ module.exports = {
   parseSmartHealthOutput,
   parsePingOutput,
   parseBatteryReport,
+  parseThermalZones,
 };

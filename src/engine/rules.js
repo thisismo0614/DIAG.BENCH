@@ -128,20 +128,42 @@ function evaluateCpu(cpu, trend, topProcesses, cpuStress, baselineComparison, co
   }
 
   const normalEvidence = [];
-  if (cpu.tempC !== null) normalEvidence.push(`온도 ${cpu.tempC}°C`);
+  // ACPI 열 영역에서 읽은 값은 CPU 패키지 온도와 정확히 같지 않을 수 있다(칩셋 영역일 수도).
+  // 어디서 읽었는지 밝혀서 "CPU 온도"라고 단정하지 않는다.
+  if (cpu.tempC !== null) {
+    normalEvidence.push(cpu.tempSource === 'acpi-thermal-zone'
+      ? `온도 ${cpu.tempC}°C (ACPI 열 영역 기준${cpu.tempZone ? ` · ${cpu.tempZone}` : ''})`
+      : `온도 ${cpu.tempC}°C`);
+  }
   normalEvidence.push(`부하 ${cpu.loadPercent}%`);
   if (cpu.clockGHz) normalEvidence.push(`클럭 ${cpu.clockGHz}GHz`);
   normalEvidence.push(...stress.evidence, ...base.evidence, ...cfg.evidence);
 
+  // ⚠ 온도를 못 읽은 **사유를 정확히 적는다.** 실측으로 확인한 바,
+  //   대부분의 경우 "센서가 없어서"가 아니라 **관리자 권한이 없어서**다.
+  //   WMI 클래스 MSAcpi_ThermalZoneTemperature가 관리자 권한을 요구한다.
+  //   두 경우는 사용자가 취할 행동이 완전히 다르다 — 전자는 어쩔 수 없고,
+  //   후자는 "관리자 권한으로 다시 측정"을 누르면 된다.
+  const tempNotTested = [];
+  if (cpu && cpu.tempC === null) {
+    if (cpu.tempReason === 'permission') {
+      tempNotTested.push('CPU 온도 — 관리자 권한이 없어 읽지 못함(관리자 권한으로 다시 측정할 수 있습니다)');
+    } else if (cpu.tempReason === 'not-supported') {
+      tempNotTested.push('CPU 온도 — 이 메인보드가 온도를 노출하지 않음');
+    } else {
+      tempNotTested.push('CPU 온도 — 읽지 못함(사유 불명)');
+    }
+  }
+
   const section = finalize('CPU', issues, null, normalEvidence, {
     tested: !!cpu && cpu.loadPercent !== null && cpu.loadPercent !== undefined,
-    // 온도 센서가 없는 PC가 흔하다(이 개발 PC도 그렇다). 부하는 쟀지만 온도는 못 쟀다는
-    // 사실을 남겨야 "CPU 이상 없음"이 온도까지 확인한 것으로 오해되지 않는다.
     notTested: [
-      ...(cpu && cpu.tempC === null ? ['CPU 온도 — 이 환경에서 센서를 읽을 수 없음'] : []),
+      ...tempNotTested,
       ...((configState && configState.notTested) || []).filter((n) => n.includes('CPU')),
     ],
   });
+  // 화면이 "관리자 권한으로 다시 측정" 버튼을 띄울지 판단하는 데 쓴다.
+  section.cpuTempReason = cpu ? (cpu.tempReason || null) : null;
   section.configStatus = configState ? configState.cpu.status : null;
   return section;
 }
