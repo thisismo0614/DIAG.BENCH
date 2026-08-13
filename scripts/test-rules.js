@@ -16,7 +16,12 @@ const { versionInfo } = require('../src/engine/version');
 const { sanitize: sanitizeSettings, DEFAULTS: SETTINGS_DEFAULTS } = require('../src/engine/settings');
 const { compareSessions } = require('../src/engine/sessionCompare');
 const { extractMetrics, hardwareKeyOf, scopeKeyOf, sanitizeNotes, NOTE_LIMITS } = require('../src/engine/sessions');
-const { buildInspectionReport } = require('../src/engine/inspectionReport');
+// hashPayload와 verifyInspectionReport는 파일 중간(826줄 부근)에서 따로 불러온다.
+// 여기서 같이 부르면 중복 선언이 된다.
+const {
+  buildInspectionReport, verificationBundle, verificationPayloadOf,
+  VERIFICATION_PAYLOAD_VERSION,
+} = require('../src/engine/inspectionReport');
 
 let passed = 0;
 let failed = 0;
@@ -2808,6 +2813,62 @@ test('"검사 안 함"을 "이상 없음"으로 바꿔치기하면 검증에 실
   gpu.result = 'PASS';
   gpu.notTested = [];
   assert.ok(!verifyInspectionReport(tampered), '검사 범위를 바꿨는데 검증이 통과하면 안 됨');
+});
+
+// ============================================================
+section('리포트 문서에 실리는 검증 자료 (웹 검증 페이지용)');
+// ============================================================
+// 저장된 리포트를 브라우저에서 검증하려면, 해시 대상이 된 자료가 문서 안에 함께 있어야 한다.
+// 여기가 어긋나면 **멀쩡한 리포트가 "변조됨"으로 표시된다** — 가장 나쁜 종류의 오작동이다.
+
+function bundleFixture() {
+  const diagnosisReport = buildReport(baseInput());
+  return buildInspectionReport(
+    diagnosisReport, { systemSerial: 'S1' }, '2026-08-13T00:00:00Z', { included: false },
+    { notes: { customerName: '홍길동', ticketId: 'A-001', memo: '따옴표 " 와 <script> 포함' } },
+  );
+}
+
+test('문서에 실리는 해시가 리포트의 검증코드와 같다', () => {
+  const rep = bundleFixture();
+  const b = verificationBundle(rep);
+  assert.strictEqual(b.hash, rep.verificationHash);
+  assert.strictEqual(b.reportId, rep.reportId);
+  assert.strictEqual(b.v, VERIFICATION_PAYLOAD_VERSION);
+});
+
+test('실린 자료로 해시를 다시 계산하면 검증코드와 일치한다 (브라우저가 하는 계산)', () => {
+  const rep = bundleFixture();
+  const b = verificationBundle(rep);
+  // 브라우저: base64 디코드 → UTF-8 문자열 → SHA-256. 재직렬화하지 않는다.
+  const json = Buffer.from(b.payloadBase64, 'base64').toString('utf-8');
+  const recomputed = require('crypto').createHash('sha256').update(json).digest('hex');
+  assert.strictEqual(recomputed, rep.verificationHash);
+});
+
+test('실린 자료의 고객명을 바꾸면 해시가 달라진다', () => {
+  const b = verificationBundle(bundleFixture());
+  const json = Buffer.from(b.payloadBase64, 'base64').toString('utf-8');
+  assert.ok(json.includes('홍길동'), '고객 기록이 해시 대상에 들어 있어야 함');
+  const tampered = json.replace('홍길동', '김철수');
+  const hash = require('crypto').createHash('sha256').update(tampered).digest('hex');
+  assert.notStrictEqual(hash, b.hash);
+});
+
+test('실린 자료는 HTML 안에서 깨질 수 없는 형태다', () => {
+  const b = verificationBundle(bundleFixture());
+  // base64에는 </script, 따옴표, 꺾쇠가 나올 수 없다. 한 글자만 바뀌어도 검증이 실패하므로
+  // 원문 JSON을 그대로 심으면 위험하다.
+  assert.ok(/^[A-Za-z0-9+/]+=*$/.test(b.payloadBase64), 'base64 문자만 있어야 함');
+});
+
+test('payload 조립이 검증과 문서에서 갈라지지 않는다', () => {
+  const rep = bundleFixture();
+  // verifyInspectionReport와 verificationBundle이 같은 함수를 쓰는지 확인한다.
+  // 서로 다른 조립을 쓰기 시작하면 한쪽만 필드를 빠뜨려도 알아채기 어렵다.
+  const fromVerify = hashPayload(verificationPayloadOf(rep));
+  assert.strictEqual(fromVerify, verificationBundle(rep).hash);
+  assert.ok(verifyInspectionReport(rep));
 });
 
 // ============================================================

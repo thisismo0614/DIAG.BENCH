@@ -1,0 +1,304 @@
+<!--TITLE:점검 리포트 검증 — DIAG.BENCH-->
+<!--DESC:DIAG.BENCH 점검 리포트가 발급된 뒤 내용이 바뀌지 않았는지 확인합니다. 파일은 어디로도 전송되지 않고 브라우저 안에서만 처리됩니다.-->
+
+<nav class="crumbs" aria-label="현재 위치">
+  <a href="index.html">홈</a> <span aria-hidden="true">›</span>
+  <span aria-current="page">리포트 검증</span>
+</nav>
+
+<section class="page-head">
+  <div class="wrap">
+    <p class="eyebrow">점검 리포트</p>
+    <h1>리포트가 발급 이후 바뀌지 않았는지 확인합니다</h1>
+    <p class="lead">받으신 <strong>점검 리포트 HTML 파일</strong>을 아래에 올려주세요.
+      브라우저가 문서 안의 원본 자료로 검증코드를 다시 계산해 대조합니다.
+      <strong>파일은 어디로도 전송되지 않습니다</strong> — 이 페이지에는 서버가 없습니다.</p>
+  </div>
+</section>
+
+<section class="article">
+  <div class="wrap article-body">
+
+    <div id="expected" class="notice" hidden>
+      <p><strong>QR에서 읽은 정보</strong><br>
+        리포트 번호 <code id="exp-id"></code><br>
+        검증코드 <code id="exp-hash"></code></p>
+    </div>
+
+    <div id="drop" class="dropzone">
+      <p class="dz-title">리포트 파일을 여기에 끌어다 놓으세요</p>
+      <p class="dz-sub">또는</p>
+      <label class="btn btn-primary" for="file">
+        <span class="btn-main">파일 선택</span>
+      </label>
+      <input type="file" id="file" accept=".html,.htm" hidden>
+      <p class="dz-hint">DIAG.BENCH에서 <strong>“HTML로 저장”</strong>한 파일이어야 합니다.
+        PDF에는 검증에 쓸 자료가 들어가지 않습니다.</p>
+    </div>
+
+    <div id="result" hidden></div>
+
+    <noscript>
+      <div class="notice notice-warn">
+        <p>이 페이지는 브라우저에서 직접 검증을 계산하기 때문에 자바스크립트가 필요합니다.
+          자바스크립트를 켜거나, DIAG.BENCH 앱에서 리포트를 불러와 검증하세요.</p>
+      </div>
+    </noscript>
+
+    <h2 id="meaning">이 검증이 말해주는 것과 말해주지 않는 것</h2>
+
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th>확인해 줍니다</th><th>확인해 주지 못합니다</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>문서에 심긴 <strong>원본 자료가 발급 이후 바뀌지 않았다는 것</strong>.
+              측정값·판정 근거·검사 범위·등급, 그리고 입력된 고객·장비 기록까지 전부 해시에 들어갑니다.
+              한 글자만 달라도 검증에 실패합니다.</td>
+          <td><strong>이 리포트가 진짜 그 PC에서 발급됐다는 것.</strong>
+              그러려면 발급 사실을 서버가 보증하는 전자서명이 필요한데,
+              DIAG.BENCH는 완전한 로컬 앱이라 그 부분이 없습니다.</td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+
+    <div class="notice notice-warn">
+      <p><strong>화면에 보이는 글자와 검증 대상은 별개입니다.</strong>
+        해시는 문서에 심긴 원본 자료를 덮습니다. 누군가 문서의 <em>보이는 글자만</em> 고쳐도
+        검증코드는 그대로 일치합니다. 그래서 검증이 통과하면 이 페이지가
+        <strong>“검증코드가 실제로 보증하는 값”</strong>을 함께 표시합니다.
+        받으신 문서와 그 값이 다르면 문서 쪽이 수정된 것입니다 — 반드시 대조하세요.</p>
+    </div>
+
+    <div class="notice notice-warn">
+      <p><strong>그리고 이것은 위조 방지가 아니라 변조 감지입니다.</strong>
+        소스가 공개되어 있으므로 마음먹으면 값을 고친 뒤 검증코드를 다시 계산하는 것도 가능합니다.
+        중고 거래처럼 판단이 걸린 상황이라면 <strong>같은 PC에서 직접 다시 실행해 결과를 대조</strong>하는 것이
+        가장 확실합니다. 이 페이지는 “받은 문서가 중간에 손대지지 않았는지”를 보는 용도입니다.</p>
+    </div>
+
+    <h2 id="how">동작 방식</h2>
+    <ol class="steps">
+      <li>리포트 HTML 안에는 검증코드 계산에 쓰인 <strong>원본 자료가 함께 들어 있습니다.</strong></li>
+      <li>이 페이지가 그 자료를 꺼내 <strong>SHA-256을 다시 계산</strong>합니다 (브라우저 내장 기능).</li>
+      <li>문서에 적힌 검증코드와 비교합니다. 같으면 발급 당시 그대로입니다.</li>
+    </ol>
+    <p class="hint">파일을 읽는 것도, 해시를 계산하는 것도 전부 브라우저 안에서 일어납니다.
+      네트워크 요청이 발생하지 않습니다 — 개발자 도구의 네트워크 탭으로 확인하실 수 있습니다.</p>
+
+    <h2 id="notfound">검증 자료가 없다고 나온다면</h2>
+    <p><strong>v0.31.0 이전 버전에서 발급한 리포트</strong>에는 이 자료가 들어 있지 않습니다.
+      그 리포트는 이 페이지로 검증할 수 없고, DIAG.BENCH 앱에서 불러와 확인해야 합니다.
+      최신 버전으로 다시 발급하면 이 페이지에서 검증할 수 있습니다.</p>
+
+    <div class="cta" style="margin-top:24px">
+      <a class="btn btn-ghost" href="download.html">DIAG.BENCH 받기</a>
+      <a class="btn btn-ghost" href="use-used-pc.html">중고 PC 점검 안내</a>
+    </div>
+
+  </div>
+</section>
+
+<script>
+// 이 사이트에서 스크립트가 실행되는 유일한 페이지다.
+// 검증을 서버 없이 하려면 브라우저가 직접 해시를 계산해야 하기 때문이다.
+// 외부에서 불러오는 코드는 없고, 파일도 업로드하지 않는다.
+(function () {
+  'use strict';
+
+  var $ = function (id) { return document.getElementById(id); };
+  var resultEl = $('result');
+
+  // QR로 들어왔다면 리포트 번호와 검증코드가 #뒤에 실려 온다.
+  // 프래그먼트는 서버로 전송되지 않으므로 접속 기록에 남지 않는다.
+  var expected = {};
+  (location.hash || '').replace(/^#/, '').split('&').forEach(function (kv) {
+    var i = kv.indexOf('=');
+    if (i > 0) expected[kv.slice(0, i)] = decodeURIComponent(kv.slice(i + 1));
+  });
+  if (expected.id || expected.hash) {
+    $('exp-id').textContent = expected.id || '(없음)';
+    $('exp-hash').textContent = expected.hash || '(없음)';
+    $('expected').hidden = false;
+  }
+
+  function esc(s) {
+    return String(s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+
+  function show(kind, title, bodyHtml) {
+    resultEl.className = 'verdict verdict-' + kind;
+    resultEl.innerHTML = '<h2>' + esc(title) + '</h2>' + bodyHtml;
+    resultEl.hidden = false;
+    resultEl.scrollIntoView({ block: 'nearest' });
+  }
+
+  function sha256Hex(text) {
+    var bytes = new TextEncoder().encode(text);
+    return crypto.subtle.digest('SHA-256', bytes).then(function (buf) {
+      return Array.prototype.map.call(new Uint8Array(buf), function (b) {
+        return b.toString(16).padStart(2, '0');
+      }).join('');
+    });
+  }
+
+  // base64 → UTF-8 문자열. atob은 바이트만 돌려주므로 TextDecoder로 해석해야
+  // 한글이 깨지지 않는다.
+  function b64ToUtf8(b64) {
+    var bin = atob(b64);
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new TextDecoder('utf-8').decode(bytes);
+  }
+
+  // 검증된 자료가 실제로 주장하는 값을 표로 만든다.
+  // 문서의 글자와 이 표가 다르면, 문서 쪽이 손대진 것이다.
+  function renderAuthoritative(payloadJson) {
+    var p;
+    try { p = JSON.parse(payloadJson); } catch (e) { return ''; }
+
+    var rows = [];
+    var add = function (k, v) { if (v !== null && v !== undefined && v !== '') rows.push([k, v]); };
+
+    var g = p.overallGrade || {};
+    add('등급', (g.letter ? g.letter + ' ' : '') + (g.label || ''));
+    add('발급 시각', p.issuedAt);
+    if (p.profile) add('검사 프로필', p.profile.label || p.profile.name || p.profile.id || '');
+
+    var scope = p.testScope || {};
+    var done = (scope.completed || []).length;
+    var not = (scope.notTested || []).length;
+    add('검사 범위', '완료 ' + done + '건 / 검사 안 함 ' + not + '건');
+
+    var t = p.totals || {};
+    add('발견된 문제', '심각 ' + (t.critical || 0) + ' · 경고 ' + (t.warning || 0) + ' · 주의 ' + (t.watch || 0));
+
+    if (p.notes) {
+      add('고객명', p.notes.customerName);
+      add('접수번호', p.notes.ticketId);
+      add('장비 별칭', p.notes.deviceAlias || p.notes.deviceName);
+    }
+    // 하드웨어 식별값은 문서와 같은 규칙으로 뒤 4자리만 보여준다.
+    if (p.hw && p.hw.systemSerial) {
+      var s = String(p.hw.systemSerial);
+      add('시스템 시리얼', s.length > 4 ? '****' + s.slice(-4) : s);
+    }
+    if (p.hw && p.hw.cpuModel) add('CPU', p.hw.cpuModel);
+
+    if (!rows.length) return '';
+
+    var html = '<div class="authoritative"><h3>이 검증코드가 실제로 보증하는 값</h3>' +
+      '<p class="hint">문서에 보이는 글자는 따로 편집될 수 있고, 그래도 검증코드는 그대로입니다. ' +
+      '<strong>아래 값과 문서를 대조하세요.</strong> 다르면 문서 쪽이 수정된 것입니다.</p><dl class="kv">';
+    rows.forEach(function (r) {
+      html += '<dt>' + esc(r[0]) + '</dt><dd>' + esc(r[1]) + '</dd>';
+    });
+    html += '</dl>';
+
+    if (not > 0) {
+      html += '<p class="hint"><strong>검사하지 않은 항목이 ' + not + '건 있습니다.</strong> ' +
+        '“이상 없음”이 아니라 “확인되지 않음”입니다.</p>';
+    }
+    return html + '</div>';
+  }
+
+  function handle(file) {
+    if (!file) return;
+    if (/\.pdf$/i.test(file.name)) {
+      show('warn', 'PDF로는 검증할 수 없습니다',
+        '<p>PDF에는 검증에 쓸 원본 자료가 들어가지 않습니다. ' +
+        'DIAG.BENCH에서 <strong>“HTML로 저장”</strong>한 파일을 사용하세요.</p>');
+      return;
+    }
+
+    var reader = new FileReader();
+    reader.onerror = function () {
+      show('warn', '파일을 읽지 못했습니다', '<p>다른 파일로 다시 시도해 보세요.</p>');
+    };
+    reader.onload = function () {
+      var text = String(reader.result);
+      var m = text.match(/<script type="application\/json" id="diagbench-verification">([\s\S]*?)<\/script>/);
+      if (!m) {
+        show('warn', '이 파일에는 검증 자료가 없습니다',
+          '<p>DIAG.BENCH 점검 리포트(HTML)가 맞는지 확인해 주세요. ' +
+          'v0.31.0 이전 버전에서 발급한 리포트에는 이 자료가 들어 있지 않습니다 — ' +
+          '<a href="#notfound">아래 설명</a>을 참고하세요.</p>');
+        return;
+      }
+
+      var bundle;
+      try {
+        bundle = JSON.parse(m[1]);
+      } catch (e) {
+        show('bad', '검증 자료가 손상되었습니다',
+          '<p>문서 안의 검증 자료를 읽을 수 없습니다. 파일이 편집 과정에서 깨졌을 수 있습니다.</p>');
+        return;
+      }
+
+      var payloadJson;
+      try {
+        payloadJson = b64ToUtf8(bundle.payloadBase64);
+      } catch (e) {
+        show('bad', '검증 자료가 손상되었습니다', '<p>원본 자료를 해석할 수 없습니다.</p>');
+        return;
+      }
+
+      sha256Hex(payloadJson).then(function (recomputed) {
+        var match = recomputed === bundle.hash;
+        var rows =
+          '<dl class="kv">' +
+          '<dt>리포트 번호</dt><dd><code>' + esc(bundle.reportId || '-') + '</code></dd>' +
+          '<dt>발급 시각</dt><dd>' + esc(bundle.issuedAt || '-') + '</dd>' +
+          '<dt>문서에 적힌 검증코드</dt><dd><code>' + esc(bundle.hash || '-') + '</code></dd>' +
+          '<dt>다시 계산한 값</dt><dd><code>' + esc(recomputed) + '</code></dd>' +
+          '</dl>';
+
+        // ⚠ 해시는 문서 안에 심긴 원본 자료만 덮는다. **화면에 보이는 글자는 따로 편집될 수 있고,
+        //   그래도 해시는 그대로 일치한다.** 실제로 문서의 고객명만 바꿔치기하면 검증이 통과했다.
+        //   그래서 검증이 통과했을 때 "이 해시가 실제로 보증하는 값"을 여기서 다시 보여준다.
+        //   사용자가 이 표와 문서를 대조하면 화면만 고친 위조를 잡아낼 수 있다.
+        var authoritative = match ? renderAuthoritative(payloadJson) : '';
+
+        // QR로 들어온 값과도 대조한다. 다르면 "다른 리포트의 QR"이라는 뜻이다.
+        var qrNote = '';
+        if (expected.hash && expected.hash !== bundle.hash) {
+          qrNote = '<div class="notice notice-warn"><p><strong>QR의 검증코드와 이 파일의 검증코드가 다릅니다.</strong> ' +
+            'QR을 읽은 리포트와 지금 올린 파일이 서로 다른 문서입니다.</p></div>';
+        } else if (expected.hash) {
+          qrNote = '<p class="hint">QR에서 읽은 검증코드와도 일치합니다.</p>';
+        }
+
+        if (match) {
+          show('ok', '검증코드가 일치합니다',
+            '<p>문서에 심긴 원본 자료로 다시 계산한 값이 문서의 검증코드와 <strong>일치합니다.</strong></p>' +
+            qrNote + authoritative + rows +
+            '<p class="hint">이 결과가 “진짜 그 PC에서 발급됐다”를 증명하지는 않습니다 — ' +
+            '<a href="#meaning">위 설명</a>을 참고하세요.</p>');
+        } else {
+          show('bad', '내용이 바뀌었습니다',
+            '<p>다시 계산한 값이 문서에 적힌 검증코드와 <strong>다릅니다.</strong> ' +
+            '발급 이후 내용이 수정되었거나 파일이 손상되었습니다. ' +
+            '이 문서의 측정값을 그대로 믿으면 안 됩니다.</p>' + qrNote + rows);
+        }
+      });
+    };
+    reader.readAsText(file, 'utf-8');
+  }
+
+  $('file').addEventListener('change', function (e) { handle(e.target.files[0]); });
+
+  var dz = $('drop');
+  ['dragenter', 'dragover'].forEach(function (t) {
+    dz.addEventListener(t, function (e) { e.preventDefault(); dz.classList.add('is-over'); });
+  });
+  ['dragleave', 'drop'].forEach(function (t) {
+    dz.addEventListener(t, function (e) { e.preventDefault(); dz.classList.remove('is-over'); });
+  });
+  dz.addEventListener('drop', function (e) {
+    handle(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]);
+  });
+})();
+</script>

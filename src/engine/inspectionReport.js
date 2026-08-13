@@ -345,10 +345,14 @@ function buildInspectionReport(diagnosisReport, hardwareIdentity, timestamp, dee
   };
 }
 
-// 생성 때와 완전히 같은 함수(buildVerificationPayload)로 payload를 다시 만들어 비교한다.
-// 두 곳에 따로 구현하면 언젠가 반드시 어긋나서, 멀쩡한 리포트를 위조로 판정하게 된다.
-function verifyInspectionReport(inspectionReport) {
-  const payload = buildVerificationPayload({
+// 완성된 리포트 객체에서 검증용 payload를 다시 만든다.
+//
+// 이 조립을 여러 곳에 흩어놓으면 안 된다 — 한 군데서 필드를 빠뜨리는 순간 멀쩡한 리포트가
+// 위조로 판정되거나(더 나쁘게는) 바뀐 내용이 검증을 통과한다. 실제로 notes를 빠뜨려
+// 고객명을 바꿔도 검증이 통과하던 버그가 있었다.
+// 그래서 검증(verifyInspectionReport)과 리포트 문서에 payload를 싣는 쪽이 이 함수 하나를 쓴다.
+function verificationPayloadOf(inspectionReport) {
+  return buildVerificationPayload({
     issuedAt: inspectionReport.issuedAt,
     hardwareIdentity: inspectionReport.hardwareIdentity,
     diagnosisReport: inspectionReport.diagnosisReport,
@@ -357,14 +361,35 @@ function verifyInspectionReport(inspectionReport) {
       vramCheck: inspectionReport.vramCheck || null,
       gpuStressCheck: inspectionReport.gpuStressCheck || null,
       smartDetails: inspectionReport.smartDetails || null,
-      // 검증할 때도 같은 값을 넣어야 한다. 빠뜨리면 고객명을 바꿔치기해도 통과한다.
       notes: inspectionReport.notes || null,
     },
     testScope: inspectionReport.testScope,
     categoryScores: inspectionReport.categoryScores,
     overallGrade: inspectionReport.overallGrade,
   });
-  return hashPayload(payload) === inspectionReport.verificationHash;
+}
+
+// 생성 때와 완전히 같은 함수(buildVerificationPayload)로 payload를 다시 만들어 비교한다.
+// 두 곳에 따로 구현하면 언젠가 반드시 어긋나서, 멀쩡한 리포트를 위조로 판정하게 된다.
+function verifyInspectionReport(inspectionReport) {
+  return hashPayload(verificationPayloadOf(inspectionReport)) === inspectionReport.verificationHash;
+}
+
+// 리포트 문서(HTML)에 실을 검증 자료.
+//
+// **해시 대상이 된 바로 그 문자열**을 그대로 실어야 한다. 객체로 실으면 읽는 쪽에서
+// 다시 직렬화할 때 키 순서나 이스케이프가 달라져 해시가 어긋날 수 있다.
+// base64로 감싸는 이유도 같다 — HTML 안에서 `</script`나 따옴표 때문에 한 글자라도
+// 바뀌면 검증이 실패한다. base64는 그런 문자가 나오지 않는다.
+function verificationBundle(inspectionReport) {
+  const json = JSON.stringify(verificationPayloadOf(inspectionReport));
+  return {
+    v: VERIFICATION_PAYLOAD_VERSION,
+    reportId: inspectionReport.reportId,
+    issuedAt: inspectionReport.issuedAt,
+    hash: inspectionReport.verificationHash,
+    payloadBase64: Buffer.from(json, 'utf-8').toString('base64'),
+  };
 }
 
 // 리포트를 공유/공개할 때 시리얼 전체를 노출하지 않기 위한 마스킹.
@@ -380,4 +405,5 @@ function maskSerial(serial) {
 module.exports = {
   buildInspectionReport, verifyInspectionReport, maskSerial, VALIDITY_DAYS,
   buildVerificationPayload, hashPayload, canonicalize, VERIFICATION_PAYLOAD_VERSION,
+  verificationPayloadOf, verificationBundle,
 };

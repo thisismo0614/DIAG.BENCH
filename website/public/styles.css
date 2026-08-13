@@ -482,6 +482,46 @@ kbd {
 /* 앵커로 이동할 때 sticky 헤더에 제목이 가리지 않게 한다 */
 .article-body [id], .doc-body [id] { scroll-margin-top: 78px; }
 
+/* ---------- 리포트 검증 페이지 ---------- */
+.dropzone {
+  border: 2px dashed var(--border); border-radius: var(--radius);
+  background: var(--bg-elev); padding: 40px 24px; text-align: center;
+  transition: border-color .15s, background .15s;
+}
+.dropzone.is-over { border-color: var(--accent); background: var(--accent-soft); }
+.dz-title { font-size: 17px; font-weight: 600; color: var(--text); margin: 0 0 6px; }
+.dz-sub { font-size: 13.5px; color: var(--text-faint); margin: 0 0 14px; }
+.dropzone .btn { cursor: pointer; }
+.dz-hint { font-size: 13.5px; color: var(--text-faint); margin: 16px 0 0; }
+
+.verdict { border-radius: var(--radius); padding: 24px; margin: 24px 0; border: 1px solid var(--border); }
+.verdict h2 { margin: 0 0 12px; font-size: 20px; }
+.verdict p { margin: 0 0 12px; }
+.verdict-ok   { background: var(--good-soft); border-color: var(--good); }
+.verdict-ok h2 { color: var(--good); }
+.verdict-bad  { background: var(--bad-soft); border-color: var(--bad); }
+.verdict-bad h2 { color: var(--bad); }
+.verdict-warn { background: var(--warn-soft); border-color: var(--warn); }
+.verdict-warn h2 { color: var(--warn); }
+
+/* 검증코드가 실제로 보증하는 값. 문서와 대조하라고 눈에 띄게 둔다. */
+.authoritative {
+  background: var(--bg-elev); border: 1px solid var(--border);
+  border-radius: 8px; padding: 18px 20px; margin: 18px 0;
+}
+.authoritative h3 { margin: 0 0 8px; font-size: 16px; }
+.authoritative .kv dd { color: var(--text); font-weight: 500; }
+
+/* 검증 결과의 값 목록. 해시가 길어서 좁은 화면에서는 위아래로 쌓는다. */
+.kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 18px; margin: 16px 0 0; }
+.kv dt { font-size: 13px; color: var(--text-faint); white-space: nowrap; }
+.kv dd { margin: 0; font-size: 13.5px; min-width: 0; }
+.kv code { word-break: break-all; }
+@media (max-width: 560px) {
+  .kv { grid-template-columns: 1fr; gap: 2px; }
+  .kv dd { margin-bottom: 10px; }
+}
+
 /* ---------- 마무리 다듬기 ---------- */
 
 /* 스크롤 막대. 기본 막대는 두껍고 회색이라 차분한 화면에서 유독 튄다.

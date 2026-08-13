@@ -3,7 +3,7 @@
 // 중고차 성능·상태점검기록부의 형식(식별 정보 → 점검 항목 → 면책 조항)을 참고했다.
 
 const QRCode = require('qrcode');
-const { maskSerial } = require('./inspectionReport');
+const { maskSerial, verificationBundle } = require('./inspectionReport');
 
 function esc(s) {
   return String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -175,11 +175,25 @@ function scoreDetailHtml(key, inspectionReport, byCat) {
 // expanded: true면 <details>를 펼친 채로 렌더링한다. PDF는 인쇄 순간의 DOM 상태를
 // 그대로 굳히는 정적 문서라, 접힌 채로 저장하면 그 안의 내용을 영영 못 보게 된다.
 // 그래서 PDF로 저장할 때만 강제로 펼치고, 화면/HTML 저장은 접은 채로 시작해 스캔하기 쉽게 한다.
+// 검증 페이지 주소. QR을 찍으면 여기로 간다.
+//
+// 값을 **#(프래그먼트)로** 넘긴다. 프래그먼트는 서버로 전송되지 않으므로,
+// 리포트 번호와 해시가 GitHub Pages 접속 기록에 남지 않는다.
+const VERIFY_URL = 'https://thisismo0614.github.io/DIAG.BENCH/verify.html';
+
 async function buildInspectionReportHtml(inspectionReport, { expanded = false } = {}) {
-  const qrDataUrl = await QRCode.toDataURL(
-    JSON.stringify({ id: inspectionReport.reportId, hash: inspectionReport.verificationHash, issuedAt: inspectionReport.issuedAt }),
-    { width: 220, margin: 1 }
-  );
+  const bundle = verificationBundle(inspectionReport);
+
+  // 예전에는 QR에 JSON을 그대로 넣었다. 찍으면 알아볼 수 없는 문자열이 뜰 뿐이라
+  // 받는 사람이 할 수 있는 일이 없었다. 이제는 검증 페이지로 보낸다.
+  const verifyLink = `${VERIFY_URL}#id=${encodeURIComponent(bundle.reportId)}`
+    + `&hash=${encodeURIComponent(bundle.hash)}`;
+  const qrDataUrl = await QRCode.toDataURL(verifyLink, { width: 220, margin: 1 });
+
+  // 검증에 쓸 원본 자료를 문서 안에 함께 싣는다. 이게 없으면 저장된 리포트를 나중에
+  // 검증할 방법이 없다(화면에 렌더링된 글자만으로는 해시를 다시 계산할 수 없다).
+  const verifyBlock = `<script type="application/json" id="diagbench-verification">`
+    + `${JSON.stringify(bundle)}</script>`;
 
   const issuedDate = new Date(inspectionReport.issuedAt).toLocaleString('ko-KR');
   const validDate = new Date(inspectionReport.validUntil).toLocaleString('ko-KR');
@@ -332,8 +346,8 @@ async function buildInspectionReportHtml(inspectionReport, { expanded = false } 
       <p class="doc-sub">발급: ${issuedDate}</p>
     </div>
     <div class="qr-box">
-      <img src="${qrDataUrl}" alt="검증 QR" />
-      <div>대조용 QR<br>(자체 검증용, 서버 조회 아님)</div>
+      <img src="${qrDataUrl}" alt="검증 페이지로 가는 QR 코드" />
+      <div>스캔하면 검증 페이지로<br>이동합니다</div>
     </div>
   </div>
 
@@ -378,18 +392,26 @@ async function buildInspectionReportHtml(inspectionReport, { expanded = false } 
     "검사를 완료했다"는 것과 "이 PC에 고장이 없다"는 것은 다른 의미입니다 — 위 "검사 범위"에 없는 항목은 확인되지 않았습니다.
     법적 성능 보증서나 공인 인증서가 아니며, 정부의 "성능인증(EPC)" 제도와 무관합니다.
     측정 시점 이후 하드웨어·소프트웨어 변경이나 새로운 고장에 대해서는 이 결과가 어떤 것도 보증하지 않습니다.<br><br>
-    <b>대조 QR / 검증코드에 대하여</b><br>
-    QR과 아래 코드는 이 리포트에 적힌 하드웨어 식별값과 점검 결과를 해시로 요약한 것입니다.
-    구매자는 판매자에게 <b>같은 PC에서 DiagBench를 재실행</b>해 검증코드가 일치하는지 확인해달라고 요청할 수 있습니다.
-    다만 이 방식은 "복사/입력 실수"나 "다른 PC 리포트 재사용"을 걸러내는 수준이며,
-    판매자가 값을 직접 조작하는 것까지 막는 암호학적 서명 방식은 아닙니다. 현재 온라인 서버 검증 페이지는 제공하지 않습니다.
-    이 검증코드는 하드웨어 식별값뿐 아니라 <b>각 항목의 판정·근거·부하 테스트 측정값·검사 범위·최종 등급까지</b> 포함해 계산됩니다.
-    따라서 리포트 내용 중 무엇 하나라도 바뀌면 검증코드가 달라집니다.<br><br>
+    <b>QR / 검증코드에 대하여</b><br>
+    이 문서에는 검증에 쓰이는 원본 자료가 함께 들어 있습니다.
+    <b>QR을 스캔하거나 검증 페이지에 이 파일(.html)을 열면</b>, 브라우저가 해시를 다시 계산해
+    발급 당시와 같은지 대조합니다. 파일은 어디로도 전송되지 않고 브라우저 안에서만 처리됩니다.
+    <div class="verify-code" style="margin:8px 0 14px">검증 페이지: ${VERIFY_URL}</div>
+    이 검증코드는 하드웨어 식별값뿐 아니라 <b>각 항목의 판정·근거·부하 테스트 측정값·검사 범위·최종 등급,
+    그리고 입력된 고객·장비 기록까지</b> 포함해 계산됩니다.
+    따라서 리포트 내용 중 무엇 하나라도 바뀌면 검증에 실패합니다.<br><br>
+    <b>다만 이것은 "위조 방지"가 아니라 "변조 감지"입니다.</b>
+    발급 이후 내용이 바뀌지 않았다는 것은 확인해 주지만,
+    <b>이 리포트가 진짜 그 PC에서 발급된 것인지는 증명하지 못합니다</b> — 그러려면 서버가 발급 사실을
+    보증하는 전자서명이 필요한데, 이 프로그램은 완전한 로컬 앱이라 그 부분이 없습니다.
+    소스가 공개되어 있으므로 마음먹고 값을 조작한 뒤 해시를 다시 계산하는 것도 가능합니다.
+    구매자라면 <b>같은 PC에서 직접 재실행</b>해 결과를 대조하는 것이 가장 확실합니다.<br><br>
     <b>리포트 번호와 검증코드는 역할이 다릅니다.</b> 리포트 번호는 이 문서를 가리키는 이름(조회·식별용)이고,
     검증코드는 내용이 바뀌지 않았음을 확인하는 값입니다. 같은 검사에서 내용이 정정되면 번호는 유지되고 검증코드만 바뀝니다.
     <div class="verify-code">리포트 번호: ${inspectionReport.reportId}<br>검증코드(SHA-256): ${inspectionReport.verificationHash}</div>
   </div>
 
+${verifyBlock}
 </body></html>`;
 }
 

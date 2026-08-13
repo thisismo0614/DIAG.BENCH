@@ -60,7 +60,7 @@ jobs:
           cd website/dist
           for f in index.html download.html faq.html 404.html styles.css favicon.svg robots.txt sitemap.xml \
                    guides.html learn.html user-guide.html technical.html og.png \
-                   fonts/diagbench-sans.woff2; do
+                   privacy.html verify.html fonts/diagbench-sans.woff2; do
             test -s "$f" || { echo "누락: $f"; exit 1; }
           done
 
