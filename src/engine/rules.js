@@ -13,6 +13,7 @@ const { compareToBaseline, deltasForSection, IDLE_CPU_LOAD_MAX, IDLE_GPU_LOAD_MA
 const { analyzeMemoryConfig } = require('./memoryConfig');
 const { analyzeConfiguration, STATUS: CONFIG_STATUS } = require('./overclock');
 const { RESULT, RESULT_LABEL, deriveResult, summarizeResults } = require('./resultStatus');
+const { resolveProfile, profileSkips } = require('./profiles');
 
 // 진단 신뢰도의 어휘. 숫자만으로는 "무엇을 근거로 이 정도 확신을 하는가"가 드러나지 않는다.
 //   CONFIRMED          실제 오류/사실이 측정으로 확인됨
@@ -1243,7 +1244,7 @@ function applyCorrelations(sections, configState) {
 }
 
 // ---------- 통합 ----------
-function buildReport({ cpu, cpuTrend, memory, memoryModules, overclockState, gpu, gpuTrend, storage, network, display, visualChecks, vramCheck, gpuStressCheck, baseline, baselineSnapshot, deepTests, system, symptom, topProcesses, eventLog }) {
+function buildReport({ cpu, cpuTrend, memory, memoryModules, overclockState, gpu, gpuTrend, storage, network, display, visualChecks, vramCheck, gpuStressCheck, baseline, baselineSnapshot, deepTests, system, symptom, profile, topProcesses, eventLog }) {
   // 정밀 검사(부하 테스트)를 돌렸다면 그 결과도 규칙 엔진에 넣는다. 이게 빠져 있으면
   // "RAM 검사에서 오류가 났는데 최종 등급은 정상"이라는 최악의 상황이 생긴다.
   const dt = deepTests && deepTests.included ? deepTests : {};
@@ -1285,7 +1286,23 @@ function buildReport({ cpu, cpuTrend, memory, memoryModules, overclockState, gpu
 
   applyCorrelations(sections, configState);
 
-  const focus = symptom ? SYMPTOM_FOCUS[symptom] : null;
+  // 프로필이 일부러 건너뛴 검사는 "이 환경에서 안 됨"이 아니라 "이 프로필에서는 안 함"이다.
+  // 사유가 다르면 사용자가 취할 행동도 다르므로(다른 프로필로 다시 돌리면 된다) 구분해서 적는다.
+  const prof = profile ? resolveProfile(profile.id || profile) : null;
+  if (prof) {
+    const skips = profileSkips(prof);
+    sections.forEach((s) => {
+      const reason = skips[s.category];
+      if (!reason) return;
+      // 실제로 측정된 게 있으면 건드리지 않는다(프로필이 껐어도 다른 경로로 값이 있을 수 있다).
+      if (s.result !== RESULT.NOT_TESTED) return;
+      s.note = reason;
+      s.skippedByProfile = true;
+      s.notTested = [reason];
+    });
+  }
+
+  const focus = (prof && prof.focus) || (symptom ? SYMPTOM_FOCUS[symptom] : null);
   if (focus) {
     // SYMPTOM_FOCUS 배열에 적힌 순서 그대로 정렬한다 (원래 sections 배열 순서가 아니라).
     const rank = (cat) => { const i = focus.indexOf(cat); return i === -1 ? 999 : i; };
@@ -1324,6 +1341,15 @@ function buildReport({ cpu, cpuTrend, memory, memoryModules, overclockState, gpu
     sections,
     symptom: symptom || 'full',
     symptomLabel: SYMPTOM_LABEL[symptom] || SYMPTOM_LABEL.full,
+    // 어떤 프로필로 검사했는지는 결과를 읽는 데 반드시 필요한 정보다 —
+    // 같은 "이상 없음"도 빠른 점검이냐 중고 PC 점검이냐에 따라 의미가 완전히 다르다.
+    profile: prof ? {
+      id: prof.id, label: prof.label, purpose: prof.purpose,
+      runsDeepTests: !!prof.deep, sessionRole: prof.sessionRole || null,
+      rulesetVersion: prof.rulesetVersion,
+      // 이 프로필이 애초에 하지 않는 검사들(환경 문제로 못 한 것과 구분된다).
+      skippedByDesign: [...Object.values(profileSkips(prof)), ...(prof.skipNotes || [])],
+    } : null,
     // 화면에서 "평소 대비" 표를 그리는 데 쓴다. 판정은 이미 섹션 이슈에 반영돼 있고
     // 여기 있는 건 같은 데이터의 표시용 사본이다(여기서 다시 판정하면 안 된다).
     baseline: baselineComparison,

@@ -10,6 +10,7 @@ const { summarizeBaselineSamples, compareToBaseline } = require('../src/engine/b
 const { analyzeMemoryConfig } = require('../src/engine/memoryConfig');
 const { analyzeConfiguration } = require('../src/engine/overclock');
 const { parsePingOutput } = require('../src/engine/collectors');
+const { PROFILES, resolveProfile, listProfiles } = require('../src/engine/profiles');
 const { buildInspectionReport } = require('../src/engine/inspectionReport');
 
 let passed = 0;
@@ -1866,6 +1867,115 @@ test('부분적으로 못 한 검사도 목록으로 남는다 (검사 범위 �
   assert.strictEqual(cpu.result, 'PASS', '부하는 쟀으므로 PASS가 맞다');
   assert.ok(cpu.notTested.some((n) => n.includes('CPU 온도')), '온도를 못 쟀다는 사실은 남아야 한다');
   assert.ok(r.notTested.some((n) => n.category === 'CPU' && n.item.includes('온도')));
+});
+
+// ============================================================
+section('진단 프로필 (기획서 §19)');
+// ============================================================
+
+test('프로필 8종이 모두 정의되어 있다', () => {
+  const ids = listProfiles().map((p) => p.id).sort();
+  assert.deepStrictEqual(ids,
+    ['full', 'gaming', 'preDelivery', 'quick', 'repairExit', 'repairIntake', 'stability', 'usedPc'].sort());
+});
+
+test('모든 프로필이 목적·대상·소요 시간을 밝힌다', () => {
+  listProfiles().forEach((p) => {
+    assert.ok(p.label && p.purpose && p.audience, `${p.id}: 설명이 비어 있음`);
+    assert.ok(p.estimatedSec > 0, `${p.id}: 예상 소요 시간이 없음`);
+  });
+});
+
+test('모르는 프로필 id는 전체 진단으로 안전하게 떨어진다', () => {
+  assert.strictEqual(resolveProfile('없는프로필').id, 'full');
+  assert.strictEqual(resolveProfile(undefined).id, 'full');
+});
+
+test('[핵심] 프로필이 끈 검사는 정상이 아니라 NOT_TESTED로 남는다', () => {
+  // 빠른 점검은 이벤트 로그를 조회하지 않는다. 3초 만에 전부 초록색이 되면
+  // 사용자는 "이 PC는 멀쩡하다"고 읽는다 — 실제로는 재부팅 이력을 안 본 것이다.
+  const r = buildReport(baseInput({
+    profile: { id: 'quick' },
+    eventLog: { supported: false, events: [], counts: [], totalCount: 0, days: 0, maxEvents: 0, truncated: false, error: null },
+  }));
+  const ev = findSection(r, 'EVENTS');
+  assert.strictEqual(ev.result, 'NOT_TESTED');
+  assert.strictEqual(ev.skippedByProfile, true);
+  assert.ok(ev.note.includes('빠른 점검'), `건너뛴 이유를 프로필 기준으로 적어야 함: ${ev.note}`);
+});
+
+test('"이 프로필에서는 안 함"과 "이 환경에서 못 함"을 구분한다', () => {
+  const skipped = buildReport(baseInput({
+    profile: { id: 'quick' },
+    eventLog: { supported: false, events: [], counts: [], totalCount: 0, days: 0, maxEvents: 0, truncated: false, error: null },
+  }));
+  const cantDo = buildReport(baseInput({
+    profile: { id: 'full' },
+    eventLog: { supported: false, events: [], counts: [], totalCount: 0, days: 0, maxEvents: 0, truncated: false, error: null },
+  }));
+  assert.ok(findSection(skipped, 'EVENTS').note.includes('빠른 점검'));
+  assert.ok(findSection(cantDo, 'EVENTS').note.includes('Windows가 아닌'));
+  assert.strictEqual(findSection(cantDo, 'EVENTS').skippedByProfile, undefined);
+});
+
+test('실제로 측정된 카테고리는 프로필이 껐어도 덮어쓰지 않는다', () => {
+  // 프로필이 껐더라도 다른 경로로 값이 들어왔다면 그건 실제 측정 결과다.
+  const r = buildReport(baseInput({ profile: { id: 'quick' }, eventLog: withEvents({ kernelPower: 5 }) }));
+  const ev = findSection(r, 'EVENTS');
+  assert.notStrictEqual(ev.result, 'NOT_TESTED');
+  assert.ok(!ev.skippedByProfile);
+});
+
+test('리포트가 어떤 프로필로 검사했는지 밝힌다', () => {
+  const r = buildReport(baseInput({ profile: { id: 'usedPc' } }));
+  assert.strictEqual(r.profile.id, 'usedPc');
+  assert.ok(r.profile.label && r.profile.purpose);
+  assert.strictEqual(r.profile.runsDeepTests, true);
+});
+
+test('게임 진단 프로필은 GPU를 맨 앞으로 정렬한다', () => {
+  const r = buildReport(baseInput({
+    profile: { id: 'gaming' },
+    gpu: { controllers: [{ model: 'Test GPU' }], supported: true, nvidia: { loadPercent: 5, tempC: 40, clockMHz: 1500, vramUsedMB: 500, vramTotalMB: 8192 } },
+  }));
+  assert.strictEqual(r.sections[0].category, 'GPU');
+  assert.strictEqual(r.sections[0].focused, true);
+});
+
+test('수리 입고/출고 프로필은 같은 검사 범위를 갖는다', () => {
+  // 범위가 다르면 전후 비교가 성립하지 않는다.
+  const intake = PROFILES.repairIntake;
+  const exit = PROFILES.repairExit;
+  assert.deepStrictEqual(intake.collect, exit.collect);
+  assert.deepStrictEqual(intake.deep, exit.deep);
+  assert.strictEqual(intake.sessionRole, 'intake');
+  assert.strictEqual(exit.sessionRole, 'exit');
+  assert.strictEqual(exit.requiresPair, 'repairIntake');
+});
+
+test('프로필이 원래 안 하는 검사도 점검 리포트의 검사 범위에 실린다', () => {
+  const diagnosisReport = buildReport(baseInput({ profile: { id: 'quick' } }));
+  const inspection = buildInspectionReport(diagnosisReport, { systemSerial: 'S1' }, '2026-08-13T00:00:00Z', { included: false }, {});
+  assert.ok(inspection.testScope.notTested.some((n) => n.includes('빠른 점검에서는')),
+    `프로필이 안 하는 검사가 범위에 없음: ${inspection.testScope.notTested.join(' / ')}`);
+  assert.strictEqual(inspection.profile.id, 'quick');
+});
+
+test('프로필을 바꿔치기하면 검증에 실패한다', () => {
+  // "빠른 점검" 결과를 "중고 PC 점검"이었다고 바꿔 적으면 안 된다.
+  const diagnosisReport = buildReport(baseInput({ profile: { id: 'quick' } }));
+  const inspection = buildInspectionReport(diagnosisReport, { systemSerial: 'S1' }, '2026-08-13T00:00:00Z', { included: false }, {});
+  assert.ok(verifyInspectionReport(inspection));
+  const tampered = JSON.parse(JSON.stringify(inspection));
+  tampered.diagnosisReport.profile.id = 'usedPc';
+  tampered.diagnosisReport.profile.label = '중고 PC 점검';
+  assert.ok(!verifyInspectionReport(tampered), '프로필을 바꿨는데 검증이 통과하면 안 됨');
+});
+
+test('프로필 없이 부른 기존 경로는 그대로 동작한다', () => {
+  const r = buildReport(baseInput());
+  assert.strictEqual(r.profile, null);
+  assert.strictEqual(findSection(r, 'CPU').status, 'normal');
 });
 
 // ============================================================

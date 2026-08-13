@@ -9,6 +9,7 @@ const vramChecks = require('./src/engine/vramChecks');
 const gpuStressChecks = require('./src/engine/gpuStressChecks');
 const baselineStore = require('./src/engine/baselineStore');
 const { summarizeBaselineSamples, MIN_SAMPLES } = require('./src/engine/baseline');
+const { resolveProfile, listProfiles } = require('./src/engine/profiles');
 const { buildComparison } = require('./src/engine/compare');
 const { buildHtmlReport } = require('./src/engine/report');
 const { buildInspectionReport } = require('./src/engine/inspectionReport');
@@ -337,6 +338,109 @@ ipcMain.handle('run-ram-test', async (event, { sizeMB } = {}) => {
 
 // 렌더러가 안전 범위를 알아야 UI에서도 같은 값으로 제한할 수 있다(두 곳이 어긋나지 않게).
 ipcMain.handle('get-stress-limits', () => stress.LIMITS);
+
+// ================= 진단 프로필 =================
+// 기획서 §19. "무엇을 위해 검사하는가"에 따라 수집 단계와 부하 테스트 강도를 바꾼다.
+//
+// ⚠ 프로필이 끈 수집 단계는 값을 지어내지 않고 **비어 있는 모양**을 그대로 넘긴다.
+//   그래야 규칙 엔진이 그 카테고리를 NOT_TESTED로 판정한다(정상으로 둔갑하지 않는다).
+//   여기서 임의로 "정상값"을 채워 넣으면 그 순간 리포트 전체가 거짓말이 된다.
+const SKIPPED = {
+  network: () => ({ defaultInterface: null, interfaces: [], stats: [], ping: { avgMs: null, jitterMs: null, lossPercent: null, raw: null } }),
+  display: () => [],
+  eventLog: () => ({ supported: false, events: [], counts: [], totalCount: 0, days: 0, maxEvents: 0, truncated: false, error: null }),
+  storage: () => ({ volumes: [], disks: [], smart: [], smartctlAvailable: false, io: null }),
+  system: () => ({ platform: process.platform, distro: null, release: null, arch: null, manufacturer: null, model: null, driverErrors: [], driverQueryOk: false }),
+  memoryModules: () => ({ supported: false, modules: [], totalSlots: null, usedSlots: null, maxCapacityGB: null, timingsAvailable: false, error: '이 프로필에서는 조회하지 않음' }),
+  overclockState: () => ({ cpu: { readable: false, voltageReadable: false }, gpu: { supported: false } }),
+  gpu: () => ({ controllers: [], nvidia: null, supported: false }),
+};
+
+ipcMain.handle('list-profiles', () => listProfiles());
+
+ipcMain.handle('run-profile', async (event, { profileId } = {}) => {
+  const p = resolveProfile(profileId);
+  const send = (stage) => event.sender.send('diagnostic-progress', stage);
+  const c = p.collect;
+
+  const baseline = baselineStore.activeBaseline(app.getPath('userData'));
+  const baselineSnapshot = baseline ? await collectors.collectIdleSnapshot() : null;
+
+  send('cpu');
+  const cpu = await collectors.collectCpu();
+  let cpuTrend = null;
+  if (c.cpuTrend && cpu.loadPercent >= 70) { send('cpu-trend'); cpuTrend = await collectors.sampleCpuTrend(4, 700); }
+
+  send('memory');
+  const memory = await collectors.collectMemory();
+  const memoryModules = c.memoryModules ? await collectors.collectMemoryModules() : SKIPPED.memoryModules();
+  const overclockState = c.overclock ? await collectors.collectOverclockState() : SKIPPED.overclockState();
+
+  send('gpu');
+  const gpu = c.gpu ? await collectors.collectGpu() : SKIPPED.gpu();
+  let gpuTrend = null;
+  if (c.gpuTrend && gpu.supported && gpu.nvidia.loadPercent >= 70) { send('gpu-trend'); gpuTrend = await collectors.sampleGpuTrend(4, 700); }
+
+  send('storage');
+  const storage = c.storage ? await collectors.collectStorage() : SKIPPED.storage();
+  send('network');
+  const network = c.network ? await collectors.collectNetwork() : SKIPPED.network();
+  send('display');
+  const display = c.display ? await collectors.collectDisplay() : SKIPPED.display();
+  send('system');
+  const system = c.system ? await collectors.collectSystem() : SKIPPED.system();
+  const topProcesses = c.processes ? await collectors.collectTopProcesses(5) : null;
+  send('events');
+  const eventLog = c.events ? await collectors.collectEventLogs(7, 50) : SKIPPED.eventLog();
+
+  const hardwareIdentity = c.identity ? (send('identity'), await collectors.collectHardwareIdentity()) : null;
+
+  // 부하 테스트는 프로필이 정한 강도로 돌린다. stress.js가 내부에서 다시 clamp하므로
+  // 여기 값이 이상해도 시스템을 위험하게 만들 수는 없다.
+  let deepTests = { included: false };
+  if (p.deep) {
+    send('deep-cpu');
+    const cpuStress = await stress.runCpuStressTest({
+      testId: `profile-${p.id}-cpu`, durationSec: p.deep.cpuStressSec, safetyTempC: p.deep.cpuSafetyTempC,
+      onProgress: (pr) => event.sender.send('stress-progress', { test: 'cpu', ...pr }),
+    });
+    send('deep-storage');
+    const storageTest = await stress.runStorageThroughputTest({ testDir: app.getPath('temp'), sizeMB: p.deep.storageMB });
+    send('deep-ram');
+    const ramTest = await stress.runRamIntegrityTest({ sizeMB: p.deep.ramMB });
+    deepTests = { included: true, cpuStress, storageTest, ramTest };
+  }
+
+  send('analyzing');
+  const visualChecks = displayChecks.activeDisplayChecks(app.getPath('userData'));
+  const vramCheck = vramChecks.activeVramCheck(app.getPath('userData'));
+  const gpuStressCheck = gpuStressChecks.activeGpuStressCheck(app.getPath('userData'));
+
+  const raw = {
+    cpu, cpuTrend, memory, memoryModules, overclockState, gpu, gpuTrend, storage, network, display,
+    visualChecks, vramCheck, gpuStressCheck, baseline, baselineSnapshot, system, topProcesses, eventLog, deepTests,
+  };
+  const report = buildReport({ ...raw, symptom: 'full', profile: { id: p.id } });
+
+  const prevHistory = history.loadHistory(app.getPath('userData'));
+  const prevEntry = prevHistory.length ? prevHistory[prevHistory.length - 1] : null;
+  report.comparison = buildComparison(prevEntry, {
+    cpuTempC: cpu.tempC, cpuLoadPercent: cpu.loadPercent,
+    gpuTempC: gpu.nvidia?.tempC ?? null, gpuLoadPercent: gpu.nvidia?.loadPercent ?? null,
+    memUsedPercent: memory.usedPercent, pingAvgMs: network.ping.avgMs,
+  });
+  history.appendHistory(app.getPath('userData'), report, raw);
+
+  // 점검 리포트를 만드는 프로필이면 문서까지 함께 돌려준다.
+  if (p.report === 'inspection') {
+    const issuedAt = new Date().toISOString();
+    const inspectionReport = buildInspectionReport(report, hardwareIdentity || {}, issuedAt, deepTests,
+      { vramCheck, gpuStressCheck, smartDetails: storage.smart });
+    const reportHtml = await buildInspectionReportHtml(inspectionReport, { expanded: false });
+    return { profile: p.id, report, raw, inspectionReport, reportHtml, hardwareIdentity, issuedAt, deepTests };
+  }
+  return { profile: p.id, report, raw };
+});
 
 // ================= 판매용 점검 리포트 =================
 // 전체 진단(run-full-diagnostic)과는 별개로, 하드웨어 시리얼까지 함께 수집해서

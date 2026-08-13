@@ -101,6 +101,9 @@ function buildVerificationPayload({ issuedAt, hardwareIdentity, diagnosisReport,
     testScope,
     categoryScores,
     overallGrade,
+    // 어떤 프로필로 검사했는지도 해시에 넣는다. 이게 빠져 있으면 "빠른 점검"으로 받은
+    // 결과를 "중고 PC 점검"이었다고 바꿔 적어도 검증을 통과하게 된다.
+    profile: diagnosisReport.profile || null,
   });
 }
 
@@ -203,6 +206,14 @@ function buildInspectionReport(diagnosisReport, hardwareIdentity, timestamp, dee
   }
   notTested.push('HDR/색영역 정밀 측정 (미구현)');
 
+  // 프로필이 애초에 하지 않는 검사도 검사 범위에 그대로 적는다.
+  // "이 프로필로는 원래 안 하는 검사"와 "이 환경에서 못 한 검사"는 사유가 다르지만,
+  // 리포트를 읽는 사람 입장에서는 **둘 다 확인되지 않은 항목**이라 반드시 함께 보여야 한다.
+  const profileInfo = diagnosisReport.profile || null;
+  (profileInfo ? profileInfo.skippedByDesign || [] : []).forEach((n) => {
+    if (!notTested.includes(n)) notTested.push(n);
+  });
+
   // ---------- 세부 영역 점수 ----------
   const hardwareHealth = worstStatus(sectionsByCat, ['CPU', 'GPU', 'RAM', 'STORAGE']);
   const thermalCondition = thermalStatus(sectionsByCat);
@@ -291,6 +302,9 @@ function buildInspectionReport(diagnosisReport, hardwareIdentity, timestamp, dee
   return {
     reportId,
     verificationPayloadVersion: VERIFICATION_PAYLOAD_VERSION,
+    // 어떤 목적의 검사였는지를 문서 자체가 밝힌다. 같은 "이상 없음"도 프로필에 따라
+    // 뜻이 다르므로, 이 값이 없으면 리포트를 제대로 읽을 수 없다.
+    profile: profileInfo,
     gradeExplanation,
     issuedAt,
     validUntil,
