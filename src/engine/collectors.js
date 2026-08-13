@@ -688,18 +688,33 @@ async function pingTest(host, count) {
   const isWin = os.platform() === 'win32';
   const cmd = isWin ? `ping -n ${count} ${host}` : `ping -c ${count} ${host}`;
   const out = await run(cmd, 8000);
+  return parsePingOutput(out);
+}
+
+// ping 출력 파서. 실제 네트워크 없이 테스트할 수 있도록 따로 분리해서 내보낸다
+// (SMART 파서들과 같은 이유).
+function parsePingOutput(out) {
   if (!out) return { avgMs: null, jitterMs: null, lossPercent: null, raw: null };
 
-  let times = [];
-  if (isWin) {
-    times = [...out.matchAll(/시간[=<]\s*(\d+)ms|time[=<]\s*(\d+)ms/gi)].map(
-      (m) => parseFloat(m[1] || m[2])
-    );
-  } else {
-    times = [...out.matchAll(/time=([\d.]+)\s*ms/gi)].map((m) => parseFloat(m[1]));
-  }
+  // ⚠ 언어·인코딩에 기대지 않는다 (실측으로 발견한 문제).
+  //   한국어 Windows의 ping 출력은 CP949라서 Node가 읽으면 한글이 깨진다. 실제 출력 예:
+  //     "1.1.1.1�� ����: ����Ʈ=32 �ð�=3ms TTL=56"
+  //   예전 정규식은 "시간=" 또는 "time="을 찾았는데 둘 다 매칭되지 않아,
+  //   **핑이 멀쩡히 3ms로 성공했는데도 avgMs=null**이 됐다. 그런데도 네트워크 섹션은
+  //   "정상"으로 표시됐다(검사 안 한 것을 정상이라고 말하던 문제의 한 사례).
+  //   숫자와 "ms"·"%"는 인코딩이 깨져도 그대로 남으므로 그 부분만 읽는다.
+  //   `=`/`<` 앞의 라벨이 무엇이든(시간/time/tempo/…) 상관없이 동작한다.
+  const times = [...out.matchAll(/[=<]\s*([\d.]+)\s*ms/gi)].map((m) => parseFloat(m[1]))
+    .filter((n) => Number.isFinite(n));
 
-  const lossMatch = out.match(/(\d+)%\s*(loss|손실)/i);
+  // 손실률도 같은 이유로 라벨(loss/손실/…)에 최대한 기대지 않는다. 다만 아무 %나 잡으면
+  // 안 되므로 형식이 뚜렷한 순서로 시도한다:
+  //   Windows  "... = 0 (0% 손실)"        → 괄호 안의 %
+  //   Linux    "2 packets transmitted, 2 received, 0% packet loss"
+  //   그 외     "... 0% loss"
+  const lossMatch = out.match(/\((\d+(?:\.\d+)?)\s*%/)
+    || out.match(/(\d+(?:\.\d+)?)\s*%\s*packet\s*loss/i)
+    || out.match(/(\d+(?:\.\d+)?)\s*%\s*(loss|손실)/i);
   const lossPercent = lossMatch ? parseFloat(lossMatch[1]) : null;
 
   if (times.length === 0) return { avgMs: null, jitterMs: null, lossPercent, raw: out };
@@ -728,24 +743,41 @@ async function collectDisplay() {
 async function collectSystem() {
   const [osInfo, systemInfo] = await Promise.all([si.osInfo(), si.system()]);
 
+  // ⚠ `si.osInfo().platform`은 Windows에서 **'win32'가 아니라 'Windows'** 를 반환한다(실측).
+  //   예전 조건(`osInfo.platform === 'win32'`)은 Windows에서도 한 번도 참이 되지 않아서
+  //   **드라이버 오류 조회가 아예 실행된 적이 없었다.** 그런데도 DRIVERS 섹션은 늘
+  //   "오류 장치 0개 · 정상"으로 표시됐다 — 검사하지 않은 것을 정상이라고 말하던 사례다.
+  //   플랫폼 판정은 항상 Node의 `process.platform`을 쓴다(값이 규격으로 고정돼 있다).
+  const isWindows = process.platform === 'win32';
   let driverErrors = [];
-  if (osInfo.platform === 'win32') {
+  let driverQueryOk = false;
+  if (isWindows) {
     const out = await run(
       'powershell -NoProfile -Command "Get-PnpDevice -Status Error | Select-Object -Property FriendlyName,InstanceId | ConvertTo-Json"',
       6000
     );
-    if (out) {
-      try {
-        const parsed = JSON.parse(out);
-        driverErrors = Array.isArray(parsed) ? parsed : [parsed];
-      } catch (e) {
-        driverErrors = [];
+    if (out !== null) {
+      driverQueryOk = true;
+      const trimmed = out.trim();
+      if (trimmed.length) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          driverErrors = Array.isArray(parsed) ? parsed : [parsed];
+        } catch (e) {
+          // 조회는 됐는데 해석을 못 한 경우 — "오류 0개"라고 단정하면 안 된다.
+          driverQueryOk = false;
+        }
       }
+      // 출력이 비어 있으면 오류 장치가 정말 0개라는 뜻이다(정상적인 결과).
     }
   }
 
   return {
-    platform: osInfo.platform,
+    // 화면·리포트가 보여주는 이름은 si의 값을 그대로 쓰되(예: "Windows"),
+    // 판정에 쓰는 값은 규격이 고정된 process.platform으로 따로 싣는다.
+    platform: process.platform,
+    platformLabel: osInfo.platform,
+    driverQueryOk,
     distro: osInfo.distro,
     release: osInfo.release,
     arch: osInfo.arch,
@@ -925,4 +957,5 @@ module.exports = {
   parseAtaSmart,
   parseSmartIdentity,
   parseSmartHealthOutput,
+  parsePingOutput,
 };

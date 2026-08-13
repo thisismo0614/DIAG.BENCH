@@ -9,6 +9,7 @@ const { buildComparison } = require('../src/engine/compare');
 const { summarizeBaselineSamples, compareToBaseline } = require('../src/engine/baseline');
 const { analyzeMemoryConfig } = require('../src/engine/memoryConfig');
 const { analyzeConfiguration } = require('../src/engine/overclock');
+const { parsePingOutput } = require('../src/engine/collectors');
 const { buildInspectionReport } = require('../src/engine/inspectionReport');
 
 let passed = 0;
@@ -1786,6 +1787,207 @@ test('설정 정보가 없어도 기존 진단이 깨지지 않는다', () => {
   assert.strictEqual(findSection(r, 'CPU').status, 'normal');
   assert.strictEqual(findSection(r, 'DRIVERS').status, 'normal');
   assert.ok(r.configuration.notTested.length > 0, '못 읽었으면 검사 안 함으로 남아야 함');
+});
+
+// ============================================================
+section('결과 상태 6단계 — "검사 안 함"을 정상이라고 말하지 않는다');
+// ============================================================
+
+// 아무것도 측정할 수 없는 환경(비NVIDIA + 오프라인 + 헤드리스 + 비Windows).
+function untestableInput(over = {}) {
+  return baseInput({
+    gpu: { controllers: [{ model: 'AMD Radeon RX 6600' }], nvidia: null, supported: false },
+    network: { ping: { avgMs: null, jitterMs: null, lossPercent: null } },
+    display: [],
+    system: { platform: 'linux', distro: 'Ubuntu', driverErrors: [] },
+    eventLog: { supported: false, events: [], days: 7, error: null },
+    ...over,
+  });
+}
+
+test('[회귀 방지] 측정 못 한 카테고리는 PASS가 아니라 NOT_TESTED다', () => {
+  // 이 프로젝트가 가장 하지 말아야 할 것 — 검사하지 않은 것을 정상이라고 말하는 것.
+  // 예전에는 아래 네 카테고리가 전부 status=normal(정상)으로 나왔다.
+  const r = buildReport(untestableInput());
+  ['GPU', 'NETWORK', 'DISPLAY', 'DRIVERS', 'EVENTS'].forEach((cat) => {
+    assert.strictEqual(findSection(r, cat).result, 'NOT_TESTED',
+      `${cat}: 측정한 게 없는데 ${findSection(r, cat).result}로 나옴`);
+  });
+});
+
+test('NOT_TESTED 섹션은 "정상 근거"를 만들지 않는다', () => {
+  const r = buildReport(untestableInput());
+  ['GPU', 'NETWORK', 'DISPLAY', 'DRIVERS', 'EVENTS'].forEach((cat) => {
+    assert.strictEqual(findSection(r, cat).normalEvidence.length, 0,
+      `${cat}: 검사도 안 했는데 정상 근거가 있음`);
+  });
+});
+
+test('측정한 카테고리는 그대로 PASS다', () => {
+  const r = buildReport(untestableInput());
+  assert.strictEqual(findSection(r, 'CPU').result, 'PASS');
+  assert.strictEqual(findSection(r, 'RAM').result, 'PASS');
+});
+
+test('headline이 검사하지 못한 항목을 숨기지 않는다', () => {
+  const r = buildReport(untestableInput({
+    storage: { volumes: [{ mount: 'C:', sizeGB: 500, usedGB: 100, usePercent: 20 }], disks: [], smart: [], smartctlAvailable: true, io: null },
+  }));
+  assert.ok(/검사하지 못했습니다/.test(r.headline), `headline: ${r.headline}`);
+  assert.strictEqual(r.resultSummary.allTested, false);
+});
+
+test('전부 검사한 정상 PC는 "현재 시스템은 정상입니다"를 그대로 유지한다', () => {
+  const r = buildReport(baseInput({
+    gpu: { controllers: [{ model: 'Test GPU' }], supported: true, nvidia: { loadPercent: 5, tempC: 40, clockMHz: 1500, vramUsedMB: 500, vramTotalMB: 8192 } },
+    storage: { volumes: [{ mount: 'C:', sizeGB: 500, usedGB: 100, usePercent: 20 }], disks: [], smart: [{ device: '/dev/sda', healthy: true, type: 'nvme' }], smartctlAvailable: true, io: null },
+    eventLog: withEvents({}),
+  }));
+  assert.strictEqual(r.headline, '현재 시스템은 정상입니다.');
+  assert.strictEqual(r.resultSummary.allTested, true);
+});
+
+test('실제 오류가 확인된 warning은 ERROR로, 가능성 수준은 WARNING으로 구분한다', () => {
+  // GPU 전력 제한 변경은 드라이버 값 비교라 CONFIRMED — 다만 level이 watch라 WARNING이다.
+  const watchOnly = buildReport(baseInput({
+    gpu: { controllers: [{ model: 'Test GPU' }], supported: true, nvidia: { loadPercent: 5, tempC: 40, clockMHz: 1500, vramUsedMB: 500, vramTotalMB: 8192 } },
+    overclockState: ocState({ gpu: { powerLimitW: 140 } }),
+  }));
+  assert.strictEqual(findSection(watchOnly, 'GPU').result, 'WARNING');
+
+  // 패킷 손실은 confidence 90 — 실제로 측정된 오류다.
+  const confirmed = buildReport(baseInput({ network: { ping: { avgMs: 20, jitterMs: 3, lossPercent: 5 } } }));
+  assert.strictEqual(findSection(confirmed, 'NETWORK').result, 'CRITICAL');
+});
+
+test('부분적으로 못 한 검사도 목록으로 남는다 (검사 범위 공개)', () => {
+  const r = buildReport(baseInput({ cpu: { model: 'Test CPU', loadPercent: 10, tempC: null, clockGHz: 3.5 } }));
+  const cpu = findSection(r, 'CPU');
+  assert.strictEqual(cpu.result, 'PASS', '부하는 쟀으므로 PASS가 맞다');
+  assert.ok(cpu.notTested.some((n) => n.includes('CPU 온도')), '온도를 못 쟀다는 사실은 남아야 한다');
+  assert.ok(r.notTested.some((n) => n.category === 'CPU' && n.item.includes('온도')));
+});
+
+// ============================================================
+section('수집 계층 — 언어/플랫폼 가정 때문에 조용히 실패하던 것들');
+// ============================================================
+
+test('[회귀 방지] 한국어 Windows의 ping 출력(인코딩 깨짐)에서도 값을 읽는다', () => {
+  // 실제로 이 개발 PC에서 나온 출력. CP949가 깨져서 "시간="이 매칭되지 않아
+  // 핑이 3ms로 멀쩡히 성공했는데도 avgMs=null이 됐고, 네트워크는 "정상"으로 표시됐다.
+  const mojibake = '\r\nPing 1.1.1.1 32����Ʈ ������ ���:\r\n'
+    + '1.1.1.1�� ����: ����Ʈ=32 �ð�=3ms TTL=56\r\n'
+    + '1.1.1.1�� ����: ����Ʈ=32 �ð�=3ms TTL=56\r\n'
+    + '1.1.1.1�� ����: ����Ʈ=32 �ð�=4ms TTL=56\r\n\r\n'
+    + '1.1.1.1�� ���� Ping ���:\r\n    ��Ŷ: ���� = 3, ���� = 3, �ս� = 0 (0% �ս�),\r\n';
+  const p = parsePingOutput(mojibake);
+  assert.strictEqual(p.avgMs, 3.3, `평균을 읽어야 함: ${JSON.stringify(p)}`);
+  assert.strictEqual(p.lossPercent, 0);
+  assert.ok(p.jitterMs !== null);
+});
+
+test('영어 Windows ping 출력도 그대로 읽는다', () => {
+  const en = 'Reply from 1.1.1.1: bytes=32 time=12ms TTL=56\r\n'
+    + 'Reply from 1.1.1.1: bytes=32 time=14ms TTL=56\r\n'
+    + 'Packets: Sent = 2, Received = 2, Lost = 0 (0% loss),\r\n';
+  const p = parsePingOutput(en);
+  assert.strictEqual(p.avgMs, 13);
+  assert.strictEqual(p.lossPercent, 0);
+});
+
+test('리눅스 ping 출력도 그대로 읽는다', () => {
+  const linux = '64 bytes from 1.1.1.1: icmp_seq=1 ttl=56 time=11.2 ms\n'
+    + '64 bytes from 1.1.1.1: icmp_seq=2 ttl=56 time=12.8 ms\n'
+    + '2 packets transmitted, 2 received, 0% packet loss\n';
+  const p = parsePingOutput(linux);
+  assert.strictEqual(p.avgMs, 12);
+  assert.strictEqual(p.lossPercent, 0);
+});
+
+test('패킷 손실이 있으면 손실률을 읽는다', () => {
+  const lossy = 'Reply from 1.1.1.1: bytes=32 time=12ms TTL=56\r\n'
+    + 'Packets: Sent = 5, Received = 1, Lost = 4 (80% loss),\r\n';
+  assert.strictEqual(parsePingOutput(lossy).lossPercent, 80);
+});
+
+test('ping이 아예 실패하면 값을 지어내지 않는다', () => {
+  const p = parsePingOutput(null);
+  assert.strictEqual(p.avgMs, null);
+  assert.strictEqual(p.lossPercent, null);
+});
+
+test('[회귀 방지] 드라이버 조회에 실패하면 "오류 장치 0개"라고 하지 않는다', () => {
+  // si.osInfo().platform이 Windows에서 'Windows'를 반환하는 바람에 조회가 한 번도
+  // 실행되지 않았는데도 DRIVERS가 늘 "정상"으로 나왔다.
+  const failed = buildReport(baseInput({
+    system: { platform: 'win32', distro: 'Windows 11', driverErrors: [], driverQueryOk: false },
+  }));
+  const d = findSection(failed, 'DRIVERS');
+  assert.strictEqual(d.result, 'NOT_TESTED', `조회 실패인데 ${d.result}`);
+  assert.strictEqual(d.normalEvidence.length, 0);
+
+  const ok = buildReport(baseInput({
+    system: { platform: 'win32', distro: 'Windows 11', driverErrors: [], driverQueryOk: true },
+  }));
+  assert.strictEqual(findSection(ok, 'DRIVERS').result, 'PASS');
+});
+
+test('드라이버 조회가 성공하고 오류 장치가 있으면 이슈로 올린다', () => {
+  const r = buildReport(baseInput({
+    system: { platform: 'win32', distro: 'Windows 11', driverQueryOk: true, driverErrors: [{ FriendlyName: 'PCI 장치' }, { FriendlyName: '알 수 없는 장치' }] },
+  }));
+  const d = findSection(r, 'DRIVERS');
+  assert.strictEqual(d.result, 'WARNING');
+  assert.ok(d.issues[0].explanation.includes('PCI 장치'));
+});
+
+// ============================================================
+section('점검 리포트 — 검사 범위와 등급의 정직성');
+// ============================================================
+
+test('[회귀 방지] 검사 범위를 실제 결과에서 뽑는다 (하드코딩 금지)', () => {
+  // 예전에는 completed 목록이 하드코딩이라, GPU를 못 읽은 PC에서도
+  // "GPU 기본 상태 — 검사 완료"라고 적혔다.
+  const diagnosisReport = buildReport(untestableInput());
+  const inspection = buildInspectionReport(diagnosisReport, { systemSerial: 'S1' }, '2026-08-13T00:00:00Z', { included: false }, {});
+  assert.ok(!inspection.testScope.completed.some((c) => c.includes('GPU 기본 상태')),
+    `측정 못 한 GPU가 검사 완료로 적힘: ${inspection.testScope.completed.join(', ')}`);
+  assert.ok(inspection.testScope.notTested.some((c) => c.includes('GPU 기본 상태')));
+  assert.ok(inspection.testScope.notTested.some((c) => c.includes('네트워크')));
+});
+
+test('[회귀 방지] 측정 못 한 카테고리를 "정상 영역"으로 나열하지 않는다', () => {
+  const diagnosisReport = buildReport(untestableInput());
+  const inspection = buildInspectionReport(diagnosisReport, { systemSerial: 'S1' }, '2026-08-13T00:00:00Z', { included: false }, {});
+  const normal = inspection.gradeExplanation.normalAreas;
+  ['GPU', '네트워크', '디스플레이', '드라이버', '시스템 이벤트 기록'].forEach((label) => {
+    assert.ok(!normal.includes(label), `검사도 안 한 ${label}이 정상 영역에 있음: ${normal.join(', ')}`);
+  });
+  assert.ok(inspection.gradeExplanation.notTestedAreas.length > 0, '미검사 영역을 따로 밝혀야 함');
+});
+
+test('일부를 검사하지 못했으면 A+를 주지 않고 등급 문구에 밝힌다', () => {
+  // 이슈는 하나도 없지만 GPU/네트워크/디스플레이/드라이버/이벤트를 못 검사한 상태.
+  const diagnosisReport = buildReport(untestableInput({
+    storage: { volumes: [{ mount: 'C:', sizeGB: 500, usedGB: 100, usePercent: 20 }], disks: [], smart: [{ device: '/dev/sda', healthy: true, type: 'nvme' }], smartctlAvailable: true, io: null },
+  }));
+  assert.strictEqual(diagnosisReport.totalWatch, 0, `이 시나리오에는 이슈가 없어야 함: ${diagnosisReport.headline}`);
+  const inspection = buildInspectionReport(diagnosisReport, { systemSerial: 'S1' }, '2026-08-13T00:00:00Z',
+    { included: true, cpuStress: null, storageTest: null, ramTest: null }, {});
+  assert.notStrictEqual(inspection.overallGrade.letter, 'A+');
+  assert.ok(inspection.overallGrade.label.includes('미검사'), inspection.overallGrade.label);
+  assert.strictEqual(inspection.overallGrade.coverageComplete, false);
+});
+
+test('"검사 안 함"을 "이상 없음"으로 바꿔치기하면 검증에 실패한다', () => {
+  const diagnosisReport = buildReport(untestableInput());
+  const inspection = buildInspectionReport(diagnosisReport, { systemSerial: 'S1' }, '2026-08-13T00:00:00Z', { included: false }, {});
+  assert.ok(verifyInspectionReport(inspection), '원본은 통과해야 함');
+  const tampered = JSON.parse(JSON.stringify(inspection));
+  const gpu = tampered.diagnosisReport.sections.find((s) => s.category === 'GPU');
+  gpu.result = 'PASS';
+  gpu.notTested = [];
+  assert.ok(!verifyInspectionReport(tampered), '검사 범위를 바꿨는데 검증이 통과하면 안 됨');
 });
 
 // ============================================================

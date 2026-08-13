@@ -17,12 +17,14 @@
 // 막지 못한다. 진짜 위변조 방지(서버 서명)는 별도 백엔드가 필요하며 이번 버전엔 없다.
 
 const crypto = require('crypto');
+const { RESULT } = require('./resultStatus');
 
 const VALIDITY_DAYS = 7;
 const STATUS_RANK = { normal: 0, watch: 1, warning: 2, critical: 3 };
 // payload 구조가 바뀌면 예전 리포트의 해시는 당연히 재계산과 달라진다. 그걸 "위변조"로
 // 오해하지 않도록 버전을 payload 안에 넣는다.
-const VERIFICATION_PAYLOAD_VERSION = 2;
+// 3: 섹션에 result(PASS/NOT_TESTED/…)와 notTested를 추가. 페이로드 모양이 바뀌면 올린다.
+const VERIFICATION_PAYLOAD_VERSION = 3;
 
 // ---------- 위변조 감지용 canonical payload ----------
 // 이전 버전은 하드웨어 식별값 + 카테고리 status만 해시했다. 그러면 예를 들어 RAM 검사에서
@@ -78,6 +80,10 @@ function buildVerificationPayload({ issuedAt, hardwareIdentity, diagnosisReport,
     sections: (diagnosisReport.sections || []).map((s) => ({
       category: s.category,
       status: s.status,
+      // 결과 상태(PASS/NOT_TESTED/…)와 못 한 검사 목록도 해시에 넣는다. 이게 빠져 있으면
+      // "검사 안 함"을 "이상 없음"으로 바꿔치기해도 검증을 통과하게 된다.
+      result: s.result || null,
+      notTested: s.notTested || [],
       note: s.note || null,
       normalEvidence: s.normalEvidence || [],
       issues: (s.issues || []).map(issueDigest),
@@ -139,11 +145,32 @@ function buildInspectionReport(diagnosisReport, hardwareIdentity, timestamp, dee
   const sectionsByCat = Object.fromEntries(diagnosisReport.sections.map((s) => [s.category, s]));
 
   // ---------- 검사 범위: 검사함 / 검사 안 함 ----------
-  const completed = [
-    'CPU 기본 상태(온도·부하·클럭)', 'GPU 기본 상태', '메모리 사용량', '저장장치 용량 및 SMART',
-    '네트워크 핑/지터/손실', '디스플레이 해상도·주사율', '드라이버 오류 장치', 'Windows 이벤트 로그(최근 7일)',
-  ];
+  // ⚠ 예전에는 이 목록이 하드코딩이었다. 그래서 GPU를 실제로 못 읽은 PC에서도
+  //   "GPU 기본 상태 — 검사 완료"라고 적혔다. 검사하지 않은 것을 검사했다고 주장하는 것은
+  //   이 문서가 절대 하면 안 되는 일이라(기획서 §37), 실제 섹션 결과에서 뽑도록 바꿨다.
+  const BASE_SCOPE = {
+    CPU: 'CPU 기본 상태(온도·부하·클럭)',
+    GPU: 'GPU 기본 상태',
+    RAM: '메모리 사용량 및 모듈 구성',
+    STORAGE: '저장장치 용량 및 SMART',
+    NETWORK: '네트워크 핑/지터/손실',
+    DISPLAY: '디스플레이 해상도·주사율',
+    DRIVERS: '드라이버 오류 장치',
+    EVENTS: 'Windows 이벤트 로그(최근 7일)',
+  };
+  const completed = [];
   const notTested = [];
+  Object.entries(BASE_SCOPE).forEach(([cat, label]) => {
+    const s = sectionsByCat[cat];
+    if (!s) { notTested.push(`${label} (검사하지 않음)`); return; }
+    if (s.result === RESULT.NOT_TESTED) {
+      notTested.push(`${label} — ${s.note || '이 환경에서 측정할 수 없음'}`);
+    } else {
+      completed.push(label);
+    }
+    // 같은 카테고리 안에서 부분적으로 못 한 검사(예: CPU 온도 센서 없음)도 빠짐없이 적는다.
+    (s.notTested || []).forEach((n) => notTested.push(n));
+  });
   if (deepTests.included && deepTests.cpuStress) completed.push('CPU 부하 테스트(Stress Test)');
   else notTested.push('CPU 부하 테스트(Stress Test)');
   if (deepTests.included && deepTests.storageTest) completed.push('저장장치 처리량 테스트');
@@ -204,12 +231,22 @@ function buildInspectionReport(diagnosisReport, hardwareIdentity, timestamp, dee
   const warningCount = diagnosisReport.totalWarnings || 0;
   const watchCount = diagnosisReport.totalWatch || 0;
 
+  // 검사 자체를 못 한 카테고리가 있으면 "이상 징후 없음"이라고 말할 수 없다.
+  // 등급은 검사된 범위에 대한 판정이므로 글자는 유지하되, A+/A의 문구가 실제보다
+  // 넓게 읽히지 않도록 범위를 함께 적고 A+는 주지 않는다(A+는 "정밀 검사 포함"이라는 뜻이라
+  // 일부를 아예 못 검사한 상태와 양립할 수 없다).
+  const untestedCategories = Object.keys(BASE_SCOPE)
+    .filter((c) => !sectionsByCat[c] || sectionsByCat[c].result === RESULT.NOT_TESTED);
+  const coverageComplete = untestedCategories.length === 0;
+
   let overallGrade;
   if (criticalCount > 0) overallGrade = { letter: 'D', label: '주요 문제 발견', level: 'critical' };
   else if (warningCount > 0) overallGrade = { letter: 'C', label: '확인이 필요한 문제 존재', level: 'warning' };
   else if (watchCount > 0) overallGrade = { letter: 'B', label: '경미한 주의사항 있음', level: 'watch' };
+  else if (!coverageComplete) overallGrade = { letter: 'A', label: '검사한 항목 기준 정상 (일부 항목 미검사)', level: 'normal' };
   else if (deepTests.included) overallGrade = { letter: 'A+', label: '정밀 검사 포함, 이상 징후 없음', level: 'normal' };
   else overallGrade = { letter: 'A', label: '기본 검사 기준 정상', level: 'normal' };
+  overallGrade.coverageComplete = coverageComplete;
 
   // 등급 글자 하나만 보면 "이 PC 전체가 C급"으로 읽힌다. 실제로는 하드웨어는 멀쩡한데
   // 이벤트 로그 하나 때문에 C가 되는 경우가 흔하다. 그래서 등급과 함께
@@ -223,13 +260,19 @@ function buildInspectionReport(diagnosisReport, hardwareIdentity, timestamp, dee
       .filter((i) => i.level === 'critical' || i.level === 'warning')
       .map((i) => ({ category: s.category, categoryLabel: CATEGORY_LABEL[s.category] || s.category, level: i.level, title: i.title })))
     .sort((a, b) => STATUS_RANK[b.level] - STATUS_RANK[a.level]);
+  // ⚠ "어디가 정상인지"에는 **실제로 검사한 것만** 넣는다.
+  //   예전에는 status === 'normal' 기준이라, 측정조차 못 한 카테고리가 "정상 영역"으로
+  //   나열됐다. 구매자에게 가장 직접적으로 잘못된 정보를 주는 자리였다.
   const normalAreas = diagnosisReport.sections
-    .filter((s) => s.status === 'normal')
+    .filter((s) => s.result === RESULT.PASS)
     .map((s) => CATEGORY_LABEL[s.category] || s.category);
   const watchAreas = diagnosisReport.sections
     .filter((s) => s.status === 'watch')
     .map((s) => CATEGORY_LABEL[s.category] || s.category);
-  const gradeExplanation = { drivers: gradeDrivers, normalAreas, watchAreas };
+  const notTestedAreas = diagnosisReport.sections
+    .filter((s) => s.result === RESULT.NOT_TESTED)
+    .map((s) => CATEGORY_LABEL[s.category] || s.category);
+  const gradeExplanation = { drivers: gradeDrivers, normalAreas, watchAreas, notTestedAreas };
 
   // ---------- 위변조 감지 해시 ----------
   // 등급과 검사 범위까지 확정된 뒤에 계산한다 — 리포트가 실제로 주장하는 내용 전부를 덮기 위해서.

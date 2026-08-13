@@ -12,6 +12,7 @@
 const { compareToBaseline, deltasForSection, IDLE_CPU_LOAD_MAX, IDLE_GPU_LOAD_MAX } = require('./baseline');
 const { analyzeMemoryConfig } = require('./memoryConfig');
 const { analyzeConfiguration, STATUS: CONFIG_STATUS } = require('./overclock');
+const { RESULT, RESULT_LABEL, deriveResult, summarizeResults } = require('./resultStatus');
 
 // 진단 신뢰도의 어휘. 숫자만으로는 "무엇을 근거로 이 정도 확신을 하는가"가 드러나지 않는다.
 //   CONFIRMED          실제 오류/사실이 측정으로 확인됨
@@ -119,7 +120,15 @@ function evaluateCpu(cpu, trend, topProcesses, cpuStress, baselineComparison, co
   if (cpu.clockGHz) normalEvidence.push(`클럭 ${cpu.clockGHz}GHz`);
   normalEvidence.push(...stress.evidence, ...base.evidence, ...cfg.evidence);
 
-  const section = finalize('CPU', issues, null, normalEvidence);
+  const section = finalize('CPU', issues, null, normalEvidence, {
+    tested: !!cpu && cpu.loadPercent !== null && cpu.loadPercent !== undefined,
+    // 온도 센서가 없는 PC가 흔하다(이 개발 PC도 그렇다). 부하는 쟀지만 온도는 못 쟀다는
+    // 사실을 남겨야 "CPU 이상 없음"이 온도까지 확인한 것으로 오해되지 않는다.
+    notTested: [
+      ...(cpu && cpu.tempC === null ? ['CPU 온도 — 이 환경에서 센서를 읽을 수 없음'] : []),
+      ...((configState && configState.notTested) || []).filter((n) => n.includes('CPU')),
+    ],
+  });
   section.configStatus = configState ? configState.cpu.status : null;
   return section;
 }
@@ -152,10 +161,12 @@ function evaluateMemory(mem, topProcesses, ramTest, baselineComparison, memModul
       '재부팅 후 동일 작업을 반복하며 스왑 사용량 추이를 다시 확인하세요.'));
   }
   const normalEvidence = [`사용률 ${mem.usedPercent}%`, `가용 메모리 ${mem.availableGB}GB / 전체 ${mem.totalGB}GB`, ...ram.evidence, ...base.evidence, ...cfg.evidence];
-  const section = finalize('RAM', issues, null, normalEvidence);
+  const section = finalize('RAM', issues, null, normalEvidence, {
+    tested: !!mem && mem.totalGB !== null && mem.totalGB !== undefined,
+    notTested: cfg.notTested,
+  });
   // 이슈가 있어도 구성 근거는 보여야 한다(어떤 모듈이 꽂혀 있는지는 판정과 무관한 사실이다).
   section.memoryConfig = cfg.summary;
-  section.notTested = cfg.notTested;
   if (section.status !== 'normal') section.evidenceAlways = cfg.evidence;
   return section;
 }
@@ -266,8 +277,17 @@ function evaluateGpu(gpu, trend, checks = {}) {
   const issues = [...vram.issues, ...stress.issues, ...base.issues, ...cfg.findings.map(issueFromFinding)];
   if (!gpu.supported) {
     const models = (gpu.controllers || []).map((c) => c.model).filter(Boolean).join(', ');
+    // ⚠ 여기가 "검사 안 한 것을 정상이라고 말하던" 자리다.
+    //   실시간 로드/온도/클럭을 하나도 못 읽었는데 이슈가 없다는 이유로 normal(정상)이 됐다.
+    //   측정한 게 없으므로 tested: false — 결과는 NOT_TESTED가 되어야 한다.
+    //   단, VRAM/GPU 부하 검사 기록이 따로 있으면 그건 실제로 측정된 것이라 검사한 것으로 본다.
+    const measuredSomething = !!(checks.vramCheck || checks.gpuStressCheck);
     return finalize('GPU', issues, 'NVIDIA GPU가 아니거나 nvidia-smi를 찾을 수 없어 실시간 로드/온도 진단은 건너뛰었습니다. (VRAM·모델 정보만 표시)',
-      [...(models ? [`인식된 GPU: ${models}`] : []), ...vram.evidence, ...stress.evidence, ...base.evidence, ...cfg.evidence]);
+      [...(models ? [`인식된 GPU: ${models}`] : []), ...vram.evidence, ...stress.evidence, ...base.evidence, ...cfg.evidence],
+      {
+        tested: measuredSomething,
+        notTested: ['GPU 실시간 온도·부하·클럭 — NVIDIA GPU가 아니거나 nvidia-smi를 찾을 수 없음'],
+      });
   }
   const nv = gpu.nvidia;
   if (nv.tempC >= 90) {
@@ -316,7 +336,14 @@ function evaluateGpu(gpu, trend, checks = {}) {
       '그래픽 옵션을 낮춘 뒤 같은 장면에서 VRAM 사용률을 다시 확인하세요.'));
   }
   const normalEvidence = [`온도 ${nv.tempC}°C`, `부하 ${nv.loadPercent}%`, `클럭 ${nv.clockMHz}MHz`, `VRAM ${nv.vramUsedMB}/${nv.vramTotalMB}MB`, ...vram.evidence, ...stress.evidence, ...base.evidence, ...cfg.evidence];
-  const section = finalize('GPU', issues, null, normalEvidence);
+  const section = finalize('GPU', issues, null, normalEvidence, {
+    tested: true,
+    notTested: [
+      ...(checks.vramCheck ? [] : ['VRAM 무결성 검사 — 따로 실행하지 않음']),
+      ...(checks.gpuStressCheck ? [] : ['GPU 부하 테스트 — 따로 실행하지 않음']),
+      ...((checks.configState && checks.configState.notTested) || []).filter((n) => n.includes('GPU')),
+    ],
+  });
   section.configStatus = checks.configState ? checks.configState.gpu.status : null;
   return section;
 }
@@ -727,7 +754,13 @@ function evaluateStorage(storage, storageTest) {
       null));
   }
   const normalEvidence = [...storage.volumes.map((v) => `${v.mount} ${v.usePercent}% 사용`), ...smartAttrEvidence, ...st.evidence];
-  return finalize('STORAGE', issues, null, normalEvidence);
+  return finalize('STORAGE', issues, null, normalEvidence, {
+    tested: !!(storage.volumes && storage.volumes.length),
+    notTested: [
+      ...(storage.smartctlAvailable ? [] : ['SMART 상태 — smartctl을 사용할 수 없음']),
+      ...(st.evidence.length ? [] : ['저장장치 처리량 테스트 — 따로 실행하지 않음']),
+    ],
+  });
 }
 
 function evaluateNetwork(net) {
@@ -760,7 +793,11 @@ function evaluateNetwork(net) {
       '공유기 재부팅 후 몇 분 지나 다시 측정해 손실률이 0%로 돌아오는지 확인하세요.'));
   }
   const normalEvidence = p.avgMs !== null ? [`핑 ${p.avgMs}ms`, `지터 ${p.jitterMs}ms`, `손실 ${p.lossPercent ?? 0}%`] : [];
-  return finalize('NETWORK', issues, null, normalEvidence);
+  // 핑을 못 쟀으면(오프라인, 방화벽 차단 등) 네트워크가 정상이라고 말할 근거가 없다.
+  return finalize('NETWORK', issues, p.avgMs === null ? '핑을 측정하지 못했습니다(오프라인이거나 ICMP가 차단된 환경일 수 있습니다).' : null, normalEvidence, {
+    tested: p.avgMs !== null,
+    notTested: p.avgMs === null ? ['네트워크 지연시간·지터·손실 — 핑 측정 실패'] : [],
+  });
 }
 
 function evaluateSystem(system) {
@@ -775,7 +812,18 @@ function evaluateSystem(system) {
       '드라이버 재설치 후 장치관리자에서 오류 아이콘이 사라졌는지 확인하세요.'));
   }
   const normalEvidence = [`오류 장치 0개`, `${system.distro || system.platform} 확인됨`];
-  return finalize('DRIVERS', issues, null, normalEvidence);
+  // 드라이버 오류 조회는 Windows에서만 되고, Windows여도 조회가 실패할 수 있다.
+  // 조회가 실제로 성공했을 때만 "오류 장치 0개"라고 말할 수 있다.
+  // (`driverQueryOk`가 없는 예전 raw로 리포트를 다시 만드는 경우를 위해 platform으로도 판단한다.)
+  const isWindows = system.platform === 'win32';
+  const queried = system.driverQueryOk !== undefined ? !!system.driverQueryOk : isWindows;
+  const note = !isWindows
+    ? 'Windows가 아닌 환경에서는 장치 드라이버 상태를 확인하지 않습니다.'
+    : (queried ? null : '장치 드라이버 상태를 조회하지 못했습니다(권한 또는 명령 실행 실패).');
+  return finalize('DRIVERS', issues, note, normalEvidence, {
+    tested: queried,
+    notTested: queried ? [] : [`장치 드라이버 오류 상태 — ${isWindows ? '조회 실패' : 'Windows가 아닌 환경'}`],
+  });
 }
 
 function evaluateDisplay(displays, visualChecks) {
@@ -809,18 +857,28 @@ function evaluateDisplay(displays, visualChecks) {
     normalEvidence.push(`${c.label}: 이상 없음(사용자 확인, ${new Date(c.checkedAt).toLocaleDateString('ko-KR')})`);
   });
 
-  return finalize('DISPLAY', issues, null, normalEvidence);
+  // 디스플레이가 하나도 안 잡히면(원격 접속, 헤드리스 등) 검사한 게 없다.
+  return finalize('DISPLAY', issues, displays.length ? null : '연결된 디스플레이를 확인하지 못했습니다.', normalEvidence, {
+    tested: displays.length > 0,
+    notTested: [
+      ...(displays.length ? [] : ['디스플레이 해상도·주사율 — 연결된 디스플레이를 찾지 못함']),
+      ...((visualChecks || []).length ? [] : ['불량화소·잔상·균일도 — 사용자 셀프체크를 실행하지 않음']),
+    ],
+  });
 }
 
 function evaluateEventLogs(eventLog) {
   if (!eventLog || !eventLog.supported) {
-    return finalize('EVENTS', [], 'Windows가 아닌 환경에서는 이벤트 로그를 확인하지 않습니다.', []);
+    // 조회 자체를 못 했으므로 "이벤트 이상 없음"이 아니다.
+    return finalize('EVENTS', [], 'Windows가 아닌 환경에서는 이벤트 로그를 확인하지 않습니다.', [],
+      { tested: false, notTested: ['Windows 이벤트 로그(WHEA·블루스크린·재부팅·드라이버 크래시) — Windows가 아닌 환경'] });
   }
   if (eventLog.error) {
     const reason = eventLog.error === 'query_failed'
       ? '이벤트 로그 조회에 실패했습니다. 관리자 권한으로 실행하면 더 안정적으로 조회됩니다.'
       : '이벤트 로그 결과를 해석하지 못했습니다.';
-    return finalize('EVENTS', [], reason, []);
+    return finalize('EVENTS', [], reason, [],
+      { tested: false, notTested: [`Windows 이벤트 로그 — ${reason}`] });
   }
 
   const events = eventLog.events || [];
@@ -1245,10 +1303,17 @@ function buildReport({ cpu, cpuTrend, memory, memoryModules, overclockState, gpu
   const totalCritical = sections.reduce((a, s) => a + s.issues.filter((i) => i.level === 'critical').length, 0);
   const totalWatch = sections.reduce((a, s) => a + s.issues.filter((i) => i.level === 'watch').length, 0);
 
+  // 검사하지 못한 카테고리가 있으면 그 사실을 숨기지 않는다.
+  // "현재 시스템은 정상입니다"는 **전부 검사했을 때만** 할 수 있는 말이다.
+  const resultSummary = summarizeResults(sections);
+  const untested = sections.filter((s) => s.result === RESULT.NOT_TESTED).map((s) => s.category);
+  const untestedNote = untested.length ? ` (${untested.join('·')}는 검사하지 못했습니다)` : '';
+
   let headline;
-  if (totalCritical > 0) headline = `${totalCritical}개의 심각한 문제가 발견되었습니다.`;
-  else if (totalWarnings > 0) headline = `${totalWarnings}개의 잠재적인 문제가 발견되었습니다.`;
-  else if (totalWatch > 0) headline = `뚜렷한 문제는 없지만, ${totalWatch}개 항목을 지켜볼 필요가 있습니다.`;
+  if (totalCritical > 0) headline = `${totalCritical}개의 심각한 문제가 발견되었습니다.${untestedNote}`;
+  else if (totalWarnings > 0) headline = `${totalWarnings}개의 잠재적인 문제가 발견되었습니다.${untestedNote}`;
+  else if (totalWatch > 0) headline = `뚜렷한 문제는 없지만, ${totalWatch}개 항목을 지켜볼 필요가 있습니다.${untestedNote}`;
+  else if (untested.length) headline = `검사한 항목에서는 문제가 없었지만, ${untested.length}개 항목(${untested.join('·')})은 검사하지 못했습니다.`;
   else headline = '현재 시스템은 정상입니다.';
 
   return {
@@ -1265,6 +1330,10 @@ function buildReport({ cpu, cpuTrend, memory, memoryModules, overclockState, gpu
     // 설정 상태 요약(정품/프로파일 적용/변경됨). 중고 거래에서 특히 중요한 정보라
     // 점검 리포트와 화면이 한눈에 보여줄 수 있게 리포트 최상위에 싣는다.
     configuration: configState,
+    // 기획서 §10의 6단계 결과 상태 집계. allTested가 false면 "전부 정상"이라고 말할 수 없다.
+    resultSummary,
+    // 검사하지 못한 항목 전체 목록 (기획서 §37 — 검사 범위 공개).
+    notTested: sections.flatMap((s) => (s.notTested || []).map((n) => ({ category: s.category, item: n }))),
     timestamp: new Date().toISOString(),
   };
 }
@@ -1286,15 +1355,27 @@ function confidenceLabel(score) {
   if (score >= 50) return 'MEDIUM';
   return 'LOW';
 }
-function finalize(category, issues, note, normalEvidence) {
+// opts로 "이 카테고리에서 실제로 측정한 게 있는가"를 함께 받는다.
+//   tested: false  → 결과는 PASS가 아니라 NOT_TESTED가 된다 (resultStatus.js 주석 참고)
+//   unknown: true  → 측정은 했지만 판단 근거가 부족함 → UNKNOWN
+//   notTested: []  → 부분적으로 못 한 검사 목록 (기획서 §37 검사 범위 공개용)
+// 기본값을 tested: true로 둔 이유는 기존 호출부(대부분 실제로 측정한다)를 그대로 두기 위함이다.
+function finalize(category, issues, note, normalEvidence, opts = {}) {
   const hasCritical = issues.some((i) => i.level === 'critical');
   const hasWarning = issues.some((i) => i.level === 'warning');
   const hasWatch = issues.some((i) => i.level === 'watch');
   const status = hasCritical ? 'critical' : hasWarning ? 'warning' : hasWatch ? 'watch' : 'normal';
-  return {
+  const section = {
     category, status, issues, note: note || null,
     normalEvidence: status === 'normal' ? (normalEvidence || []) : [],
+    notTested: opts.notTested || [],
   };
+  // 기획서 §10의 6단계 결과 상태. 기존 status는 등급 계산·화면이 쓰고 있어 그대로 둔다.
+  section.result = deriveResult(section, { tested: opts.tested !== false, unknown: !!opts.unknown });
+  section.resultLabel = RESULT_LABEL[section.result];
+  // 검사를 못 했으면 "정상 근거"를 남기면 안 된다 — 근거가 없는데 있는 것처럼 보인다.
+  if (section.result === RESULT.NOT_TESTED) section.normalEvidence = [];
+  return section;
 }
 
 module.exports = { buildReport, SYMPTOM_LABEL };

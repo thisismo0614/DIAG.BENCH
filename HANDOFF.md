@@ -356,6 +356,30 @@ Sensor Recording, Event Log Analysis, Detailed Result, Diagnosis Engine)은 **�
     다시 찾고, 사전 릴리스면 화면에 **"사전 릴리스"라고 명시**한다(숨기지 않는다).
     ⚠ `release.yml`은 건드리지 않았다 — SignPath 연동이 걸려 있는 파일이다.
 
+24. **`si.osInfo().platform`은 Windows에서 `'win32'`가 아니라 `'Windows'`를 반환한다.**
+    `collectSystem()`이 `osInfo.platform === 'win32'`로 분기하고 있어서 **드라이버 오류 조회
+    (`Get-PnpDevice -Status Error`)가 Windows에서도 한 번도 실행된 적이 없었다.** 그런데도
+    DRIVERS 섹션은 늘 "오류 장치 0개 · 정상"으로 표시됐다. 고치고 나니 이 개발 PC에서
+    **오류 장치가 실제로 3개** 잡혔다(등급도 A → C로 바뀌었다).
+    → **플랫폼 판정은 항상 Node의 `process.platform`을 쓸 것.** 값이 규격으로 고정돼 있다.
+    systeminformation의 `platform`은 사람이 읽는 이름이라 버전에 따라 달라질 수 있다.
+
+25. **한국어 Windows의 `ping` 출력은 CP949라서 Node가 읽으면 한글이 깨진다.**
+    실제 출력: `1.1.1.1�� ����: ����Ʈ=32 �ð�=3ms TTL=56`
+    예전 파서는 `시간=` 또는 `time=`을 찾았는데 둘 다 매칭되지 않아, **핑이 3ms로 멀쩡히
+    성공했는데도 `avgMs=null`** 이 됐다. 그런데도 NETWORK 섹션은 "정상"으로 표시됐다.
+    → **OS 명령 출력을 파싱할 때 언어에 의존하지 말 것.** 숫자와 `ms`·`%` 같은 기호는
+    인코딩이 깨져도 살아남는다. `parsePingOutput()`은 `[=<]\s*([\d.]+)\s*ms`로 라벨과
+    무관하게 읽는다. 파서는 실제 네트워크 없이 테스트할 수 있도록 따로 내보냈다.
+
+26. **위 두 가지는 "검사 안 한 것을 정상이라고 말하던" 구조 때문에 오래 숨어 있었다.**
+    섹션 상태가 critical/warning/watch/normal 네 가지뿐이라, 아무것도 측정하지 못한
+    카테고리가 `normal`(정상)으로 표시됐다. 그래서 수집이 통째로 실패해도 화면은 초록색이었다.
+    → 이제 섹션마다 `result`(기획서 §10의 6단계)를 함께 만든다:
+    `PASS / WARNING / ERROR / CRITICAL / NOT_TESTED / UNKNOWN` (`src/engine/resultStatus.js`).
+    **새 검사를 추가하면 `finalize()`에 `tested`를 반드시 넘길 것.** 안 넘기면 기본값이
+    `tested: true`라 측정 실패가 다시 PASS로 둔갑한다. 못 한 검사는 `notTested`에 적는다.
+
 ---
 
 ## 5-2. 배포 인프라 (2026-08-13 구축)
