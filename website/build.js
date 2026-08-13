@@ -386,10 +386,12 @@ function esc(s) {
 <section class="article">
   <div class="wrap">
     <div class="hub-grid">
+      ${/* guides.html은 분류(h2) 아래에 카드가 오지만 이 페이지는 분류가 없다.
+            여기서 h3를 쓰면 h1 다음이 h3가 되어 제목 단계가 끊긴다. */''}
       ${learnArticles.map((a) => `
       <a class="hub-card" href="${a.file}">
         <span class="hub-topic">${md.esc(a.topic)}</span>
-        <h3>${md.esc(a.title)}</h3>
+        <h2>${md.esc(a.title)}</h2>
         <p>${md.esc(a.blurb)}</p>
       </a>`).join('')}
     </div>

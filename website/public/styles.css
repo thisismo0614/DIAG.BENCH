@@ -115,6 +115,9 @@ pre code { background: none; border: none; padding: 0; }
 @media (max-width: 640px) {
   .nav { height: auto; padding: 12px 20px; flex-direction: column; align-items: flex-start; gap: 10px; }
   .nav-links { gap: 16px; flex-wrap: wrap; }
+  /* 메뉴가 6개가 되면서 세로로 두 줄이 된다. 그 상태로 sticky를 유지하면 좁은 화면에서
+     본문 영역의 13% 가까이를 상시 차지한다. 글을 읽는 페이지가 대부분이므로 놓아준다. */
+  .site-header { position: static; }
 }
 
 /* ---------- 히어로 ---------- */
@@ -385,7 +388,9 @@ kbd {
 }
 .hub-card:hover { border-color: var(--accent); color: inherit; }
 .hub-card:active { transform: translateY(1px); }
-.hub-card h3 { font-size: 16px; margin: 0 0 8px; color: var(--text); }
+/* 카드 제목은 페이지에 분류(h2)가 있으면 h3, 없으면 h2가 된다 — 제목 단계를 건너뛰지
+   않기 위해서다. 어느 쪽이든 같은 크기로 보여야 한다. */
+.hub-card h2, .hub-card h3 { font-size: 16px; margin: 0 0 8px; color: var(--text); line-height: 1.4; }
 .hub-card p { margin: 0; font-size: 14px; color: var(--text-dim); line-height: 1.6; }
 .hub-topic {
   display: inline-block; font-size: 11.5px; font-weight: 700; letter-spacing: .05em;
@@ -411,7 +416,10 @@ kbd {
 .toc a:hover { background: var(--bg-sunken); color: var(--accent); }
 
 @media (max-width: 900px) {
-  .doc-layout { grid-template-columns: 1fr; gap: 28px; }
+  /* ⚠ minmax(0, 1fr)이어야 한다. 그냥 1fr로 두면 트랙의 기본 min-width가 auto라
+     안의 표 너비만큼 벌어지고, 페이지 전체가 가로로 밀린다(모바일 373px에서 문서폭이
+     662px가 됐다). .table-scroll의 overflow-x도 트랙이 먼저 늘어나면 소용이 없다. */
+  .doc-layout { grid-template-columns: minmax(0, 1fr); gap: 28px; }
   .toc { position: static; border-bottom: 1px solid var(--border); padding-bottom: 20px; }
   .toc ol { columns: 2; column-gap: 20px; }
 }
