@@ -18,6 +18,30 @@
 // are interpolated as-is. They may be Korean — we do not have an English form of what
 // Windows told us, and inventing one would be worse than showing the original.
 
+// The Korean original composes some phrases before it builds the sentence (a date, a
+// coverage description, a "A → B" range). Those arrive here as raw values, so the same
+// phrases are rebuilt in English — passing the assembled Korean string through would
+// leave Korean embedded in an English sentence.
+function enDate(iso) {
+  if (!iso) return 'an unknown date';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? 'an unknown date'
+    : d.toLocaleDateString('en-GB', { year: 'numeric', month: 'long', day: 'numeric' });
+}
+
+function vramCoverage(p) {
+  return p.coveredMB !== null && p.coveredMB !== undefined && p.totalMB
+    ? `${Math.round(p.coveredMB)} MB of ${p.totalMB} MB total VRAM`
+    : `${Math.round(p.allocatedMB)} MB of allocated range (not confirmed to be real VRAM)`;
+}
+
+const range = (from, to, unit) => (from !== null && from !== undefined && to !== null && to !== undefined
+  ? `${Math.round(from)}${unit} → ${Math.round(to)}${unit}`
+  : null);
+const tempRange = (p) => range(p.startTempC, p.endTempC, '°C');
+const clockRange = (p) => range(p.startClockMHz, p.endClockMHz, ' MHz');
+
 module.exports = {
   // ---------- CPU: temperature and load ----------
   'CPU-TEMP-CRITICAL': {
@@ -313,6 +337,340 @@ module.exports = {
     ],
     evidence: (p) => [`Packet loss ${p.lossPercent}%`],
     verification: 'Restart the router, wait a few minutes, and measure again to see whether loss returns to 0%.',
+  },
+
+  // ---------- GPU: temperature, throttling, VRAM ----------
+  'GPU-TEMP-CRITICAL': {
+    title: 'GPU temperature is at a dangerous level',
+    explanation: (p) => `The GPU is currently at ${p.tempC}°C.`,
+    causes: ['A failed cooler or fan', 'Dust built up on the heatsink', 'Heat trapped inside the case'],
+    actions: [
+      'Look and confirm the GPU fans are actually spinning',
+      'Open the case and see how the temperature changes',
+      'Clear the dust',
+    ],
+    evidence: (p) => [`Temperature ${p.tempC}°C (danger threshold: 90°C and above)`],
+    verification: 'Clear the dust, then run the same game or workload and confirm the GPU stays below 90°C.',
+  },
+
+  'GPU-TEMP-ELEVATED': {
+    title: 'GPU temperature is somewhat elevated',
+    explanation: (p) => `At ${p.loadPercent}% load the temperature is ${p.tempC}°C. This may be the normal range for this GPU model, so it is too early to call it a problem.`,
+    causes: [
+      'Possibly just ordinary heavy work in progress',
+      'Possibly a cooling margin that is gradually shrinking',
+    ],
+    actions: ['No action is needed, but if it keeps rising, check the case airflow'],
+    evidence: (p) => [`Load ${p.loadPercent}%`, `Temperature ${p.tempC}°C`, 'Below the danger threshold (90°C) — verdict withheld'],
+    verification: 'Play the same game for 30 minutes or more, then run the diagnosis again and see whether the temperature approaches 90°C.',
+  },
+
+  'GPU-THERMAL-THROTTLING': {
+    title: 'GPU thermal throttling is suspected',
+    explanation: (p) => `With GPU usage continuously above 90%, the temperature rose from ${p.tempFrom}°C to ${p.tempTo}°C while the clock fell from ${p.clockFrom} MHz to ${p.clockTo} MHz.`,
+    causes: [
+      'Thermal limiting caused by insufficient cooling',
+      'Prolonged heavy load in a hot environment',
+    ],
+    actions: [
+      'Check case airflow (intake and exhaust)',
+      'Check the GPU fan curve',
+      'Clear dust from the heatsink and re-test',
+    ],
+    evidence: ['Sustained GPU load confirmed', 'Rising temperature trend confirmed', 'Falling clock trend confirmed', 'Performance may be reduced'],
+    verification: 'Run the same game again with a full diagnosis and compare whether the temperature and clock trends improved.',
+  },
+
+  'GPU-TEMP-RISING-NO-THROTTLE': {
+    title: 'GPU temperature is rising, but there is not yet evidence of throttling',
+    explanation: (p) => `The temperature rose from ${p.tempFrom}°C to ${p.tempTo}°C, but the clock held at ${p.clockFrom} MHz → ${p.clockTo} MHz, so there is no clear sign of performance limiting.`,
+    causes: [
+      'A normal response to heavy load (not throttling yet)',
+      'Throttling could follow if the temperature keeps rising',
+    ],
+    actions: ['Nothing needs doing right now — watch the temperature over a longer gaming session'],
+    evidence: ['Rising temperature confirmed', 'No clock drop observed — throttling verdict withheld'],
+    verification: 'Play the same game for longer, then run a full diagnosis again and check whether the clock still holds.',
+  },
+
+  'GPU-VRAM-NEAR-LIMIT': {
+    title: 'VRAM usage is close to the limit',
+    explanation: (p) => `${p.vramUsedMB} MB of ${p.vramTotalMB} MB of VRAM is in use.`,
+    causes: [
+      'Graphics settings too high for the amount of VRAM',
+      'Several GPU-accelerated programs running at once',
+    ],
+    actions: [
+      'Lower the graphics options (texture quality and so on)',
+      'Close GPU-accelerated programs you are not using',
+    ],
+    evidence: (p) => [`VRAM usage ${Math.round((p.vramUsedMB / p.vramTotalMB) * 100)}%`],
+    verification: 'Lower the graphics options and check VRAM usage again in the same scene.',
+  },
+
+  // ---------- VRAM integrity check (run separately from the renderer) ----------
+  // 날짜·검사 범위는 원문에서 이미 한국어로 조립돼 있다. 여기서 원재료로 다시 조립한다.
+  'VRAM-MISMATCH': {
+    title: 'The VRAM integrity check found mismatches',
+    explanation: (p) => `When data written into VRAM was read back and compared, ${Number(p.mismatchWords).toLocaleString('en-US')} words (4 bytes each) differed from what was written (checked ${enDate(p.checkedAt)}, ${vramCoverage(p)}). What was observed goes as far as "what was read differs from what was written" — this check alone cannot tell you whether the cause is a faulty VRAM cell or a driver problem.`,
+    causes: [
+      'A faulty VRAM cell',
+      'A memory clock overclock pushed too far',
+      'A graphics driver error',
+      'Data corruption caused by GPU overheating',
+    ],
+    actions: [
+      'If you overclocked the memory, return it to default and check again',
+      'Switch the graphics driver to the latest or the last stable version and check again',
+      'If the same result repeats, have the GPU serviced',
+    ],
+    evidence: (p) => [
+      `${Number(p.mismatchWords).toLocaleString('en-US')} mismatched words`,
+      `Coverage: ${vramCoverage(p)}`,
+    ],
+    verification: 'Run "Stability > VRAM stress and integrity test" once more and see whether the same result reproduces. A mismatch seen only once may have been transient.',
+  },
+
+  'VRAM-CONTEXT-LOST': {
+    title: 'The graphics context was lost during the VRAM test',
+    explanation: (p) => `The VRAM test run on ${enDate(p.checkedAt)} lost its graphics context partway through. This is what you see when the graphics driver resets (TDR).`,
+    causes: [
+      'The graphics driver stopped responding (TDR)',
+      'Not enough VRAM',
+      'Unstable power delivery',
+      'A GPU hardware fault',
+    ],
+    actions: [
+      'Reinstall the graphics driver',
+      'Close every other GPU-using program and test again',
+      'Check the Display errors in the Windows event log',
+    ],
+    evidence: ['Graphics context lost during the VRAM test'],
+    verification: 'Run the VRAM test again and see whether it repeats at the same point.',
+  },
+
+  // ---------- GPU stress test ----------
+  'GPU-STRESS-THROTTLE': {
+    title: 'The stress test confirmed GPU thermal throttling',
+    explanation: (p) => `In the peak-load section of the GPU stress test run on ${enDate(p.checkedAt)}, the temperature rose (${tempRange(p) || 'no measurement'}) while the clock fell (${clockRange(p) || 'no measurement'}). These values come from a load we applied deliberately, so they reproduce more reliably than catching a moment of incidental load.`,
+    causes: [
+      'Insufficient cooling (a fan not spinning properly, dust on the heatsink)',
+      'Insufficient airflow inside the case',
+      'Aged thermal pads or paste',
+    ],
+    actions: [
+      'Look and confirm the GPU fans actually spin under load',
+      'Check the case intake and exhaust fans',
+      'Clear dust from the heatsink and re-run the same stress test',
+    ],
+    // ⚠ 근거 줄 수가 1~3줄로 달라진다. 원문과 같은 조건을 써야 개수가 맞는다.
+    evidence: (p) => [
+      `Peak temperature ${p.maxTempC !== null && p.maxTempC !== undefined ? `${Math.round(p.maxTempC)}°C` : 'not measurable'}`,
+      ...(tempRange(p) ? [`Temperature at peak load ${tempRange(p)}`] : []),
+      ...(clockRange(p) ? [`Clock at peak load ${clockRange(p)}`] : []),
+    ],
+    verification: 'After clearing dust or changing the fan settings, run "Stability > GPU stress test" again and compare whether the clock holds through the same section.',
+  },
+
+  'GPU-STRESS-SAFETY-ABORT': {
+    title: 'The GPU stress test stopped automatically at the safety temperature limit',
+    explanation: (p) => `During the test on ${enDate(p.checkedAt)} the GPU reached the safety limit (${p.safetyTempC !== null && p.safetyTempC !== undefined ? Math.round(p.safetyTempC) : 90}°C) and the test stopped itself. Note that this test applies a heavier load than a real game, so it does not mean everyday use reaches the same temperature.`,
+    causes: [
+      'Insufficient cooling',
+      'A hot room',
+      'A GPU model that simply runs hot by design',
+    ],
+    actions: [
+      'Run the same test with the case open and compare the difference',
+      'Check the fan curve settings',
+      'Watch the temperature with live monitoring in the games you actually play',
+    ],
+    evidence: (p) => [
+      `Peak temperature during the stress test ${p.maxTempC !== null && p.maxTempC !== undefined ? `${Math.round(p.maxTempC)}°C` : 'not measurable'}`,
+      'Stopped automatically on reaching the safety limit',
+    ],
+    verification: 'Watch the temperature with live monitoring while running a game you actually play, and compare whether it climbs as high as the stress test did.',
+  },
+
+  // ---------- Storage volumes ----------
+  'STORAGE-VOLUME-FULL': {
+    title: (p) => `Drive ${p.mount} is running out of free space`,
+    explanation: (p) => `${p.usedGB} GB of ${p.sizeGB} GB (${p.usePercent}%) is in use.`,
+    causes: [
+      'Accumulated unnecessary files and caches',
+      'More installed software than the drive comfortably holds',
+    ],
+    actions: [
+      'Run the disk cleanup tool',
+      'Back up large files and delete them',
+    ],
+    evidence: (p) => [`Usage ${p.usePercent}%`],
+    verification: 'After clearing space, run a full diagnosis again and confirm usage dropped below 90%.',
+  },
+
+  // ---------- SMART: overall health ----------
+  'SMART-HEALTH-FAILED': {
+    title: (p) => `Storage device (${p.device}): SMART reports a fault`,
+    explanation: 'The SMART self-assessment returned something other than PASSED. There is a risk of data loss.',
+    causes: ['The drive is physically worn or faulty'],
+    actions: ['Back up important data immediately', 'Consider replacing the drive'],
+    evidence: ['SMART self-assessment result: FAILED'],
+    verification: 'After backing up, cross-check the SMART status once more with the manufacturer’s diagnostic tool.',
+  },
+
+  'SMART-HEALTH-UNKNOWN': {
+    title: (p) => `Storage device (${p.device}): the SMART status could not be determined`,
+    explanation: 'smartctl responded, but PASSED/FAILED could not be read reliably from the output. This device is not being called healthy or faulty. On Windows it is common for SMART to be unreadable without administrator rights.',
+    causes: [
+      'A device that cannot be opened without administrator rights (the most common cause)',
+      'Differences in SMART output format on some SSDs and RAID controllers',
+      'A USB-to-SATA bridge that does not pass SMART through',
+    ],
+    actions: [
+      'Try again with administrator rights',
+      'If that does not work, check directly with the manufacturer’s own SSD utility',
+    ],
+    evidence: ['smartctl output could not be interpreted'],
+  },
+
+  'SMART-TOOL-UNAVAILABLE': {
+    title: 'The SMART status could not be checked',
+    explanation: 'smartctl could not be run, so the drive’s SMART self-assessment was not read. This does not mean there is anything wrong with the drive — only that the tool could not be started.',
+    causes: ['The bundled smartctl executable could not be found or run (possibly a damaged installation), or the OS is unsupported'],
+    actions: ['Try reinstalling the app. If it persists, installing smartmontools (smartctl) yourself also works'],
+    evidence: ['smartctl failed to run'],
+  },
+
+  // ---------- SMART: individual attributes ----------
+  // 대기 중 섹터는 "읽기에 실패해 재할당을 기다리는 중"이라 가장 강한 조기 신호다.
+  'SMART-PENDING-SECTORS': {
+    title: (p) => `${p.label}: ${p.count} sector(s) failed to read (pending sectors)`,
+    explanation: (p) => `The overall SMART assessment still says PASSED, but ${p.count} sector(s) failed to read and are waiting to be reallocated. This value is known to rise before a drive fails outright, so it warns you earlier than the overall assessment does.`,
+    causes: [
+      'Degradation of the disk surface or cells',
+      'Unstable power during a read',
+      'Read failures caused by poor cable contact',
+    ],
+    actions: [
+      'Back up important data right now',
+      'After backing up, run a full surface scan (chkdsk /r or the manufacturer’s tool)',
+      'Replace the drive if the count keeps growing',
+    ],
+    evidence: (p) => [
+      `Current_Pending_Sector: ${p.count}`,
+      `Overall SMART assessment: ${p.status === 'passed' ? 'PASSED (but an attribute is signalling a problem)' : p.status}`,
+    ],
+    verification: 'Back up, run a surface scan, then re-run the diagnosis in a few days and compare whether the pending sector count has grown. If it has, the drive needs replacing.',
+  },
+
+  'SMART-UNCORRECTABLE-SECTORS': {
+    title: (p) => `${p.label}: ${p.count} sector(s) could not be corrected`,
+    explanation: 'These sectors could not be corrected even during an offline scan. The data held there may already be lost.',
+    causes: ['Physical damage to the drive', 'End of service life'],
+    actions: ['Back up important data immediately', 'Prepare to replace the drive'],
+    evidence: (p) => [`Offline_Uncorrectable: ${p.count}`],
+    verification: 'Once the backup is done, cross-check with the manufacturer’s diagnostic tool.',
+  },
+
+  'SMART-REALLOCATED-SECTORS': {
+    title: (p) => `${p.label}: ${p.count} sector(s) have been reallocated`,
+    explanation: (p) => 'These are sectors judged bad and moved to the spare area. '
+      + (p.many
+        ? 'The count is not small, so degradation may be under way.'
+        : 'A handful of reallocations is not unusual on a drive in use, and does not by itself mean failure. What matters is whether the count grows.'),
+    causes: ['Surface degradation (including the natural progression that comes with use)'],
+    actions: [
+      'Check that your backups of important data are current',
+      'Re-run the diagnosis every few weeks and watch whether the count grows',
+    ],
+    evidence: (p) => [`Reallocated_Sector_Ct: ${p.count}`],
+    verification: 'Re-run the diagnosis in a few weeks and compare the reallocated sector count. The trend is the key evidence for a replacement decision.',
+  },
+
+  'SMART-REPORTED-UNCORRECT': {
+    title: (p) => `${p.label}: ${p.count} uncorrectable error(s) reported`,
+    explanation: 'This is how many times the drive reported an error it could not correct itself. It is known to be a strong predictor of failure.',
+    causes: ['Drive degradation', 'A controller or firmware problem'],
+    actions: ['Back up important data', 'Track whether the value grows'],
+    evidence: (p) => [`Reported_Uncorrect: ${p.count}`],
+    verification: 'Re-run the diagnosis in a few days and check whether the value has increased.',
+  },
+
+  // CRC는 디스크가 아니라 대개 케이블 문제다. 같은 심각도로 다루면 멀쩡한 디스크를 버리게 된다.
+  'SMART-CRC-ERRORS': {
+    title: (p) => `${p.label}: ${p.count} data transfer error(s) (CRC)`,
+    explanation: 'These errors happened in transit between the drive and the motherboard. **They point at the cable or the connection far more often than at the drive itself.** The value is cumulative, so it may be left over from something that happened once in the past.',
+    causes: [
+      'A faulty or loose SATA cable',
+      'Poor contact on the power cable',
+      'A problem with the motherboard port',
+    ],
+    actions: [
+      'Swap the SATA cable and use a different port (the most common fix)',
+      'If the value stops growing after the swap, the cable was the problem',
+    ],
+    evidence: (p) => [`UDMA_CRC_Error_Count: ${p.count}`, 'This attribute reflects the connection, not the life of the drive'],
+    verification: 'Replace the cable, use the machine for a few days, then re-run the diagnosis and confirm the value has not grown further.',
+  },
+
+  // ---------- SSD wear ----------
+  'SMART-SPARE-BELOW-THRESHOLD': {
+    title: (p) => `${p.label}: the spare area has fallen below the threshold`,
+    explanation: (p) => `Available spare blocks are at ${p.percent}%, at or below the manufacturer’s threshold of ${p.threshold}%. This signals that the SSD has reached the end of its life.`,
+    causes: ['The SSD write endurance is exhausted', 'Accumulated bad blocks'],
+    actions: ['Back up important data immediately', 'Prepare to replace the SSD'],
+    evidence: (p) => [`Available Spare ${p.percent}% (threshold ${p.threshold}%)`],
+    verification: 'Back up, cross-check with the manufacturer’s tool, and go ahead with the replacement.',
+  },
+
+  'SMART-WEAR-HIGH': {
+    title: (p) => `${p.label}: ${p.percentUsed}% of the write endurance has been used`,
+    explanation: (p) => (p.over
+      ? 'The drive has used all of the write endurance the manufacturer warrants. That does not mean it will fail immediately, but you are past the warranted range, so it is worth backing up more often.'
+      : 'The drive is approaching the manufacturer’s warranted write endurance. Still within normal operation, but worth watching.'),
+    causes: ['A high cumulative write volume (ordinary wear from use)'],
+    // 배열 **전체**를 함수로 둔다. 원소 하나만 함수로 두면 검증기가 문자열이 아니라고
+    // 판단해 이 이슈가 통째로 한국어로 떨어진다(실제로 그렇게 짰다가 잡았다).
+    actions: (p) => [
+      'Keep your backup interval short for important data',
+      p.over ? 'Planning a replacement is recommended' : 'Check the endurance figure periodically',
+    ],
+    // ⚠ 근거 줄 수를 원문과 맞춘다. 누적 쓰기량이 없으면 원문도 한 줄이다.
+    evidence: (p) => [
+      `Percentage Used ${p.percentUsed}%`,
+      ...(p.totalHostWritesTB !== null && p.totalHostWritesTB !== undefined
+        ? [`Total host writes ${p.totalHostWritesTB} TB`] : []),
+    ],
+    verification: 'Re-run the diagnosis every few months and see how fast the endurance figure climbs.',
+  },
+
+  // ---------- NVMe self-reported warnings ----------
+  'SMART-CRITICAL-WARNING': {
+    title: (p) => `${p.label}: the drive is reporting a critical warning flag (${p.flag})`,
+    explanation: 'The NVMe drive is reporting a critical condition about itself — for example spare area exhausted, temperature exceeded, degraded reliability, or a switch to read-only.',
+    causes: ['Spare area exhausted', 'Temperature threshold exceeded', 'Degraded internal reliability'],
+    actions: ['Back up important data immediately', 'Check the detailed status with the manufacturer’s tool'],
+    evidence: (p) => [`Critical Warning ${p.flag}`],
+    verification: 'After backing up, cross-check with the manufacturer’s diagnostic tool.',
+  },
+
+  'SMART-MEDIA-ERRORS': {
+    title: (p) => `${p.label}: ${p.count} media/data integrity error(s) recorded`,
+    explanation: 'These are data errors the drive could not correct. The value is cumulative; the trend is what matters.',
+    causes: ['NAND cell degradation', 'A controller or firmware problem'],
+    actions: ['Back up important data', 'Check for a firmware update', 'Track whether the value grows'],
+    evidence: (p) => [`Media and Data Integrity Errors: ${p.count}`],
+    verification: 'Re-run the diagnosis in a few days and check whether the value has grown.',
+  },
+
+  'SMART-FAILING-NOW': {
+    title: (p) => `${p.label}: an attribute has fallen below the manufacturer’s threshold`,
+    explanation: (p) => `${(p.failingNow || []).map((f) => f.name).join(', ')} ${(p.failingNow || []).length === 1 ? 'is' : 'are'} below the threshold set by the manufacturer. This is not our criterion — it is the drive maker’s own.`,
+    causes: ['Degradation of whatever the attribute measures'],
+    actions: ['Back up important data immediately', 'Prepare to replace the drive'],
+    // 근거 줄이 실패한 속성 개수만큼 만들어진다 — 원문과 같은 배열을 돈다.
+    evidence: (p) => (p.failingNow || []).map((f) => `${f.name} (ID ${f.id}) — below threshold`),
+    verification: 'After backing up, cross-check with the manufacturer’s diagnostic tool.',
   },
 
   // ---------- Drivers ----------

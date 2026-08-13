@@ -238,7 +238,13 @@ function vramCheckFindings(vramCheck) {
       ['VRAM 셀 불량', '메모리 클럭 오버클럭이 과도함', '그래픽 드라이버 오류', 'GPU 과열로 인한 데이터 손상'],
       ['메모리 오버클럭을 했다면 기본값으로 되돌린 뒤 다시 검사', '그래픽 드라이버를 최신 또는 직전 안정 버전으로 바꾼 뒤 다시 검사', '같은 결과가 반복되면 GPU 점검/A-S 문의'],
       74, [`불일치 ${vramCheck.mismatchWords.toLocaleString()}워드`, `검사 범위: ${coverage}`],
-      '"안정성 테스트 > VRAM 압박·무결성 테스트"를 한 번 더 실행해 같은 결과가 재현되는지 확인하세요. 한 번만 나온 불일치는 일시적 오류일 수 있습니다.'));
+      '"안정성 테스트 > VRAM 압박·무결성 테스트"를 한 번 더 실행해 같은 결과가 재현되는지 확인하세요. 한 번만 나온 불일치는 일시적 오류일 수 있습니다.',
+      // ⚠ 날짜와 "검사 범위" 문구는 이미 한국어로 조립된 값이다. 번역이 다시 조립할 수
+      //    있도록 **원재료를 넘긴다** — 조립된 문자열을 넘기면 영어 문장에 한국어가 박힌다.
+      { id: 'VRAM-MISMATCH', params: {
+        checkedAt: vramCheck.checkedAt, mismatchWords: vramCheck.mismatchWords,
+        totalMB: vramCheck.totalMB, coveredMB: vramCheck.coveredMB, allocatedMB: vramCheck.allocatedMB,
+      } }));
   }
 
   if (vramCheck.contextLost) {
@@ -247,7 +253,8 @@ function vramCheckFindings(vramCheck) {
       ['그래픽 드라이버 응답 없음(TDR)', 'VRAM 부족', '전원 공급 불안정', 'GPU 하드웨어 이상'],
       ['그래픽 드라이버 재설치', '다른 GPU 사용 프로그램을 모두 끄고 다시 검사', 'Windows 이벤트 로그의 Display 오류 확인'],
       68, ['VRAM 테스트 중 그래픽 컨텍스트 손실'],
-      'VRAM 테스트를 다시 실행해 같은 지점에서 반복되는지 확인하세요.'));
+      'VRAM 테스트를 다시 실행해 같은 지점에서 반복되는지 확인하세요.',
+      { id: 'VRAM-CONTEXT-LOST', params: { checkedAt: vramCheck.checkedAt } }));
   }
 
   if (vramCheck.verdict === 'pass') {
@@ -290,7 +297,13 @@ function gpuStressFindings(stressCheck) {
         ...(tempLine ? [`최고 부하 구간 온도 ${tempLine}`] : []),
         ...(clockLine ? [`최고 부하 구간 클럭 ${clockLine}`] : []),
       ],
-      '먼지 제거나 팬 설정 변경 후 "안정성 테스트 > GPU 부하 테스트"를 다시 실행해 같은 구간에서 클럭이 유지되는지 비교하세요.'));
+      '먼지 제거나 팬 설정 변경 후 "안정성 테스트 > GPU 부하 테스트"를 다시 실행해 같은 구간에서 클럭이 유지되는지 비교하세요.',
+      // 근거 줄 수가 온도·클럭 측정 유무에 따라 1~3줄로 달라진다. 번역도 같은 조건을 쓴다.
+      { id: 'GPU-STRESS-THROTTLE', params: {
+        checkedAt: stressCheck.checkedAt, maxTempC: stressCheck.maxTempC,
+        startTempC: stressCheck.highLoadStartTempC, endTempC: stressCheck.highLoadEndTempC,
+        startClockMHz: stressCheck.highLoadStartClockMHz, endClockMHz: stressCheck.highLoadEndClockMHz,
+      } }));
   }
 
   if (stressCheck.abortReason === 'safety-temp') {
@@ -299,7 +312,10 @@ function gpuStressFindings(stressCheck) {
       ['냉각 성능 부족', '실내 온도가 높은 환경', '해당 GPU 모델의 원래 높은 동작 온도'],
       ['같은 테스트를 케이스 개방 상태에서 실행해 온도 차이를 비교', '팬 커브 설정 확인', '실제 사용하는 게임에서 실시간 모니터링으로 온도 확인'],
       70, [`부하 테스트 중 최고 온도 ${stressCheck.maxTempC !== null ? Math.round(stressCheck.maxTempC) + '°C' : '측정 불가'}`, '안전 한계 도달로 자동 중단'],
-      '실제로 사용하는 게임을 실행한 상태에서 실시간 모니터링으로 온도를 확인해, 부하 테스트만큼 올라가는지 비교하세요.'));
+      '실제로 사용하는 게임을 실행한 상태에서 실시간 모니터링으로 온도를 확인해, 부하 테스트만큼 올라가는지 비교하세요.',
+      { id: 'GPU-STRESS-SAFETY-ABORT', params: {
+        checkedAt: stressCheck.checkedAt, safetyTempC: stressCheck.safetyTempC, maxTempC: stressCheck.maxTempC,
+      } }));
   }
 
   if (stressCheck.verdict === 'pass') {
@@ -345,14 +361,16 @@ function evaluateGpu(gpu, trend, checks = {}) {
       ['쿨러/팬 고장', '방열판 먼지 누적', '케이스 내부 열 정체'],
       ['GPU 팬 회전 여부 육안 확인', '케이스 개방 후 온도 변화 확인', '먼지 제거'],
       92, [`온도 ${nv.tempC}°C (위험 임계값 90°C 이상)`],
-      '먼지 제거 후 같은 게임/작업을 실행하며 GPU 온도가 90°C 아래로 유지되는지 확인하세요.'));
+      '먼지 제거 후 같은 게임/작업을 실행하며 GPU 온도가 90°C 아래로 유지되는지 확인하세요.',
+      { id: 'GPU-TEMP-CRITICAL', params: { tempC: nv.tempC } }));
   } else if (nv.tempC >= 80 && nv.loadPercent >= 80) {
     issues.push(mkIssue('watch', 'GPU 온도가 다소 높은 편입니다',
       `부하 ${nv.loadPercent}% 상태에서 온도가 ${nv.tempC}°C입니다. 이 GPU 모델의 정상 범위일 수도 있어 즉각적인 문제로 보기는 이릅니다.`,
       ['일반적인 고부하 작업 중일 가능성', '냉각 여유가 점점 줄어들고 있을 가능성'],
       ['특별한 조치 없이 지켜봐도 되지만, 계속 상승하면 케이스 airflow를 점검하세요'],
       42, [`부하 ${nv.loadPercent}%`, `온도 ${nv.tempC}°C`, '위험 임계값(90°C) 미만 — 판단 보류'],
-      '같은 게임을 30분 이상 플레이한 뒤 다시 진단해 온도가 90°C에 근접하는지 확인하세요.'));
+      '같은 게임을 30분 이상 플레이한 뒤 다시 진단해 온도가 90°C에 근접하는지 확인하세요.',
+      { id: 'GPU-TEMP-ELEVATED', params: { tempC: nv.tempC, loadPercent: nv.loadPercent } }));
   }
   if (trend && trend.length >= 3) {
     const first = trend[0];
@@ -366,14 +384,20 @@ function evaluateGpu(gpu, trend, checks = {}) {
         ['냉각 성능 부족으로 인한 열 제한(throttling)', '고온 환경에서의 장시간 고부하 작업'],
         ['케이스 airflow(흡기/배기) 확인', 'GPU 팬 커브 설정 확인', '방열판 먼지 제거 후 재검사'],
         91, ['GPU 고부하 지속 확인됨', '온도 상승 추세 확인됨', '클럭 하락 추세 확인됨', '성능 저하 가능성'],
-        '같은 게임을 다시 실행하면서 전체 진단을 돌려 온도·클럭 추이가 개선되었는지 비교하세요.'));
+        '같은 게임을 다시 실행하면서 전체 진단을 돌려 온도·클럭 추이가 개선되었는지 비교하세요.',
+        { id: 'GPU-THERMAL-THROTTLING', params: {
+          tempFrom: first.tempC, tempTo: last.tempC, clockFrom: first.clockMHz, clockTo: last.clockMHz,
+        } }));
     } else if (loadHigh && tempRising && !clockDropping) {
       issues.push(mkIssue('watch', 'GPU 온도가 상승 중이지만 스로틀링 근거는 아직 부족합니다',
         `온도는 ${first.tempC}°C → ${last.tempC}°C로 상승했지만, 클럭은 ${first.clockMHz}MHz → ${last.clockMHz}MHz로 유지되고 있어 성능 제한의 뚜렷한 증거는 없습니다.`,
         ['정상적인 고부하 반응(아직 스로틀링 아님)', '온도가 더 상승하면 스로틀링으로 이어질 가능성'],
         ['지금 당장 조치할 필요는 없지만, 더 긴 게임 세션에서 온도 추이를 지켜보세요'],
         45, ['온도 상승 확인됨', '클럭 하락은 확인되지 않음 — 스로틀링 판정 보류'],
-        '같은 게임을 더 오래 플레이한 뒤 전체 진단을 다시 실행해 클럭이 그때도 유지되는지 확인하세요.'));
+        '같은 게임을 더 오래 플레이한 뒤 전체 진단을 다시 실행해 클럭이 그때도 유지되는지 확인하세요.',
+        { id: 'GPU-TEMP-RISING-NO-THROTTLE', params: {
+          tempFrom: first.tempC, tempTo: last.tempC, clockFrom: first.clockMHz, clockTo: last.clockMHz,
+        } }));
     }
   }
   if (nv.vramUsedMB / nv.vramTotalMB > 0.95) {
@@ -382,7 +406,8 @@ function evaluateGpu(gpu, trend, checks = {}) {
       ['그래픽 설정이 VRAM 용량 대비 과도하게 높음', '다수 GPU 가속 프로그램 동시 실행'],
       ['게임/작업 그래픽 옵션(텍스처 품질 등) 낮추기', '불필요한 GPU 가속 프로그램 종료'],
       72, [`VRAM 사용률 ${Math.round((nv.vramUsedMB / nv.vramTotalMB) * 100)}%`],
-      '그래픽 옵션을 낮춘 뒤 같은 장면에서 VRAM 사용률을 다시 확인하세요.'));
+      '그래픽 옵션을 낮춘 뒤 같은 장면에서 VRAM 사용률을 다시 확인하세요.',
+      { id: 'GPU-VRAM-NEAR-LIMIT', params: { vramTotalMB: nv.vramTotalMB, vramUsedMB: nv.vramUsedMB } }));
   }
   const normalEvidence = [`온도 ${nv.tempC}°C`, `부하 ${nv.loadPercent}%`, `클럭 ${nv.clockMHz}MHz`, `VRAM ${nv.vramUsedMB}/${nv.vramTotalMB}MB`, ...vram.evidence, ...stress.evidence, ...base.evidence, ...cfg.evidence];
   const section = finalize('GPU', issues, null, normalEvidence, {
@@ -640,7 +665,8 @@ function smartAttributeFindings(smartEntry) {
       ['디스크 표면/셀 열화', '읽기 중 전원 불안정', '케이블 접촉 불량으로 인한 읽기 실패'],
       ['지금 바로 중요 데이터를 백업하세요', '백업 후 전체 표면 검사(chkdsk /r 또는 제조사 도구) 실행', '값이 계속 늘어나면 디스크 교체'],
       severe ? 90 : 78, [`대기 중 섹터(Current_Pending_Sector) ${a.pendingSectors}개`, `SMART 전체 판정: ${smartEntry.status === 'passed' ? 'PASSED (하지만 속성에 이상 신호)' : smartEntry.status}`],
-      '백업 후 표면 검사를 돌리고, 며칠 뒤 다시 진단해 대기 중 섹터가 늘어나는지 비교하세요. 늘어나면 교체가 필요합니다.'));
+      '백업 후 표면 검사를 돌리고, 며칠 뒤 다시 진단해 대기 중 섹터가 늘어나는지 비교하세요. 늘어나면 교체가 필요합니다.',
+      { id: 'SMART-PENDING-SECTORS', params: { label, count: a.pendingSectors, status: smartEntry.status } }));
   }
   if (has(a.uncorrectableSectors) && a.uncorrectableSectors > 0) {
     issues.push(mkIssue('critical', `${label}: 정정할 수 없는 섹터가 ${a.uncorrectableSectors}개 있습니다`,
@@ -648,7 +674,8 @@ function smartAttributeFindings(smartEntry) {
       ['디스크 물리적 손상', '수명 말기'],
       ['중요 데이터를 즉시 백업하세요', '디스크 교체를 준비하세요'],
       92, [`정정 불가 섹터(Offline_Uncorrectable) ${a.uncorrectableSectors}개`],
-      '백업을 마친 뒤 제조사 진단 도구로 교차 확인하세요.'));
+      '백업을 마친 뒤 제조사 진단 도구로 교차 확인하세요.',
+      { id: 'SMART-UNCORRECTABLE-SECTORS', params: { label, count: a.uncorrectableSectors } }));
   }
   if (has(a.reallocatedSectors) && a.reallocatedSectors > 0) {
     // 재할당은 "이미 처리된" 불량이라 소량은 흔하다. 많을 때만 경고로 올린다.
@@ -658,7 +685,8 @@ function smartAttributeFindings(smartEntry) {
       ['디스크 표면 열화(사용에 따른 자연스러운 진행 포함)'],
       ['중요 데이터 백업 상태를 점검하세요', '몇 주 간격으로 다시 진단해 개수가 늘어나는지 확인하세요'],
       many ? 72 : 40, [`재할당 섹터(Reallocated_Sector_Ct) ${a.reallocatedSectors}개`],
-      '몇 주 뒤 다시 진단해 재할당 섹터 수가 증가했는지 비교하세요. 증가 추세가 교체 판단의 핵심 근거입니다.'));
+      '몇 주 뒤 다시 진단해 재할당 섹터 수가 증가했는지 비교하세요. 증가 추세가 교체 판단의 핵심 근거입니다.',
+      { id: 'SMART-REALLOCATED-SECTORS', params: { label, count: a.reallocatedSectors, many } }));
   }
   if (has(a.reportedUncorrect) && a.reportedUncorrect > 0) {
     issues.push(mkIssue('warning', `${label}: 정정 불가 오류가 ${a.reportedUncorrect}건 보고되었습니다`,
@@ -666,7 +694,8 @@ function smartAttributeFindings(smartEntry) {
       ['디스크 열화', '컨트롤러/펌웨어 문제'],
       ['중요 데이터 백업', '값이 늘어나는지 추적'],
       70, [`Reported_Uncorrect ${a.reportedUncorrect}건`],
-      '며칠 뒤 다시 진단해 값이 증가하는지 확인하세요.'));
+      '며칠 뒤 다시 진단해 값이 증가하는지 확인하세요.',
+      { id: 'SMART-REPORTED-UNCORRECT', params: { label, count: a.reportedUncorrect } }));
   }
 
   // --- 전송 계층(케이블) 문제: 디스크 자체와 구분해야 한다 ---
@@ -676,7 +705,8 @@ function smartAttributeFindings(smartEntry) {
       ['SATA 케이블 불량/헐거움', '전원 케이블 접촉 불량', '메인보드 포트 문제'],
       ['SATA 케이블을 다른 것으로 교체하고 다른 포트에 연결해보세요(가장 흔한 해결책)', '교체 후 값이 더 늘지 않으면 케이블 문제였던 것입니다'],
       45, [`UDMA_CRC_Error_Count ${a.crcErrors}건`, '이 항목은 디스크 수명이 아니라 연결 상태를 가리킵니다'],
-      '케이블 교체 후 며칠 사용하고 다시 진단해, 값이 더 늘지 않는지 확인하세요.'));
+      '케이블 교체 후 며칠 사용하고 다시 진단해, 값이 더 늘지 않는지 확인하세요.',
+      { id: 'SMART-CRC-ERRORS', params: { label, count: a.crcErrors } }));
   }
 
   // --- SSD 수명 ---
@@ -686,7 +716,10 @@ function smartAttributeFindings(smartEntry) {
       ['SSD 쓰기 수명 소진', '불량 블록 누적'],
       ['중요 데이터를 즉시 백업하세요', 'SSD 교체를 준비하세요'],
       93, [`Available Spare ${a.availableSparePercent}% (임계값 ${a.availableSpareThreshold}%)`],
-      '백업 후 제조사 도구로 교차 확인하고 교체를 진행하세요.'));
+      '백업 후 제조사 도구로 교차 확인하고 교체를 진행하세요.',
+      { id: 'SMART-SPARE-BELOW-THRESHOLD', params: {
+        label, percent: a.availableSparePercent, threshold: a.availableSpareThreshold,
+      } }));
   }
   if (has(a.wearPercentUsed) && a.wearPercentUsed >= 90) {
     const over = a.wearPercentUsed >= 100;
@@ -697,7 +730,13 @@ function smartAttributeFindings(smartEntry) {
       ['누적 쓰기량이 많음(정상적인 사용에 따른 소모)'],
       ['중요 데이터 백업 주기를 짧게 유지하세요', over ? '교체 계획을 세우는 것을 권장합니다' : '수명 수치를 주기적으로 확인하세요'],
       over ? 68 : 38, [`Percentage Used ${a.wearPercentUsed}%`, ...(has(a.totalHostWritesTB) ? [`누적 쓰기 ${a.totalHostWritesTB}TB`] : [])],
-      '몇 달 간격으로 다시 진단해 수명 수치가 얼마나 빠르게 오르는지 확인하세요.'));
+      '몇 달 간격으로 다시 진단해 수명 수치가 얼마나 빠르게 오르는지 확인하세요.',
+      // ⚠ 근거 줄 수가 totalHostWritesTB 유무에 따라 달라진다. 번역도 같은 조건을 써야
+      //    개수가 맞는다 — 안 맞으면 이 이슈는 통째로 원문으로 떨어진다.
+      { id: 'SMART-WEAR-HIGH', params: {
+        label, percentUsed: a.wearPercentUsed, over,
+        totalHostWritesTB: has(a.totalHostWritesTB) ? a.totalHostWritesTB : null,
+      } }));
   }
 
   // --- NVMe 자체 경고 플래그 / 미디어 오류 ---
@@ -707,7 +746,8 @@ function smartAttributeFindings(smartEntry) {
       ['예비 영역 소진', '온도 임계 초과', '내부 신뢰성 저하'],
       ['중요 데이터를 즉시 백업하세요', '제조사 도구로 상세 상태를 확인하세요'],
       92, [`Critical Warning ${a.criticalWarning}`],
-      '백업 후 제조사 진단 도구로 교차 확인하세요.'));
+      '백업 후 제조사 진단 도구로 교차 확인하세요.',
+      { id: 'SMART-CRITICAL-WARNING', params: { label, flag: a.criticalWarning } }));
   }
   if (has(a.mediaErrors) && a.mediaErrors > 0) {
     issues.push(mkIssue('warning', `${label}: 미디어/데이터 무결성 오류가 ${a.mediaErrors}건 기록되었습니다`,
@@ -715,7 +755,8 @@ function smartAttributeFindings(smartEntry) {
       ['NAND 셀 열화', '컨트롤러/펌웨어 문제'],
       ['중요 데이터 백업', '펌웨어 업데이트 확인', '값이 증가하는지 추적'],
       72, [`Media and Data Integrity Errors ${a.mediaErrors}건`],
-      '며칠 뒤 다시 진단해 값이 늘어나는지 확인하세요.'));
+      '며칠 뒤 다시 진단해 값이 늘어나는지 확인하세요.',
+      { id: 'SMART-MEDIA-ERRORS', params: { label, count: a.mediaErrors } }));
   }
 
   // --- 제조사 기준 "지금 고장 중"인 속성 (ATA WHEN_FAILED 열) ---
@@ -725,7 +766,9 @@ function smartAttributeFindings(smartEntry) {
       ['해당 속성이 가리키는 부위의 열화'],
       ['중요 데이터를 즉시 백업하세요', '디스크 교체를 준비하세요'],
       94, a.failingNow.map((f) => `${f.name} (ID ${f.id}) — 임계값 이하`),
-      '백업 후 제조사 진단 도구로 교차 확인하세요.'));
+      '백업 후 제조사 진단 도구로 교차 확인하세요.',
+      // 근거 줄이 실패한 속성 개수만큼 만들어진다. 번역도 같은 배열을 돌아야 한다.
+      { id: 'SMART-FAILING-NOW', params: { label, failingNow: a.failingNow } }));
   }
 
   // --- 이슈가 아니어도 남겨야 하는 맥락 정보 ---
@@ -780,7 +823,10 @@ function evaluateStorage(storage, storageTest) {
         ['불필요한 파일/캐시 누적', '용량 대비 과도한 설치 프로그램'],
         ['디스크 정리 도구 실행', '대용량 파일 백업 후 삭제'],
         80, [`사용률 ${v.usePercent}%`],
-        '정리 후 전체 진단을 다시 실행해 사용률이 90% 아래로 내려갔는지 확인하세요.'));
+        '정리 후 전체 진단을 다시 실행해 사용률이 90% 아래로 내려갔는지 확인하세요.',
+        { id: 'STORAGE-VOLUME-FULL', params: {
+          mount: v.mount, sizeGB: v.sizeGB, usedGB: v.usedGB, usePercent: v.usePercent,
+        } }));
     }
   });
   storage.smart.forEach((s) => {
@@ -790,7 +836,8 @@ function evaluateStorage(storage, storageTest) {
         ['저장장치 물리적 노후/불량'],
         ['중요 데이터 즉시 백업', '저장장치 교체 검토'],
         97, ['SMART 자가진단 결과: FAILED'],
-        '백업 후 제조사 진단 도구로 SMART 상태를 다시 한번 교차 확인하세요.'));
+        '백업 후 제조사 진단 도구로 SMART 상태를 다시 한번 교차 확인하세요.',
+        { id: 'SMART-HEALTH-FAILED', params: { device: s.device } }));
     } else if (s.healthy === null) {
       // smartctl은 응답했지만 PASSED/FAILED를 명확히 판별하지 못한 경우.
       // "정상"도 "이상"도 아니라는 걸 분명히 해서, 잘못된 안심/불안을 주지 않는다.
@@ -802,7 +849,8 @@ function evaluateStorage(storage, storageTest) {
           ['관리자 권한 없이는 열 수 없는 장치(가장 흔한 원인)', '일부 SSD/RAID 컨트롤러의 SMART 출력 형식 차이', 'USB-SATA 브릿지를 통한 연결로 SMART 패스스루 미지원'],
           ['관리자 권한으로 다시 검사해보세요', '그래도 안 되면 제조사 전용 SSD 관리 툴로 직접 확인하는 것을 권장합니다'],
           null, ['smartctl 실행 결과 판독 불가'],
-          null),
+          null,
+          { id: 'SMART-HEALTH-UNKNOWN', params: { device: s.device } }),
         code: 'smart-unknown',
         device: s.device,
         smartType: s.type || null,
@@ -815,7 +863,8 @@ function evaluateStorage(storage, storageTest) {
       ['앱에 동봉된 smartctl 실행 파일을 찾거나 실행하지 못함(설치 손상 가능성) 또는 지원하지 않는 OS'],
       ['앱을 재설치해 보세요. 계속되면 smartmontools(smartctl)를 직접 설치해도 확인할 수 있습니다'],
       null, ['smartctl 실행 실패'],
-      null));
+      null,
+      { id: 'SMART-TOOL-UNAVAILABLE', params: {} }));
   }
   const normalEvidence = [...storage.volumes.map((v) => `${v.mount} ${v.usePercent}% 사용`), ...smartAttrEvidence, ...st.evidence];
   return finalize('STORAGE', issues, null, normalEvidence, {

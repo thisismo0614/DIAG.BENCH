@@ -2815,6 +2815,155 @@ test('지원하지 않는 언어는 원문 리포트를 그대로 준다', () =>
   assert.ok(/[가-힣]/.test(issue.title));
 });
 
+test('[핵심] id를 붙인 이슈는 실제로 발동시켰을 때 전부 번역된다', () => {
+  // 카탈로그에 항목이 있는 것과 **그 번역이 실제로 적용되는 것**은 다르다.
+  // 근거 줄 수가 값에 따라 달라지는 항목(SSD 수명, 제조사 임계값 미달)은 조건을
+  // 원문과 똑같이 쓰지 않으면 개수가 어긋나 통째로 한국어로 떨어진다.
+  // 그래서 규칙을 실제로 돌려서 확인한다.
+  const smartAttrs = {
+    device: '/dev/sda', healthy: true, status: 'passed',
+    identity: { model: 'TEST-SSD-1TB' },
+    attributes: {
+      pendingSectors: 12, uncorrectableSectors: 3, reallocatedSectors: 80,
+      reportedUncorrect: 5, crcErrors: 7,
+      availableSparePercent: 4, availableSpareThreshold: 10,
+      wearPercentUsed: 105, totalHostWritesTB: 320,
+      criticalWarning: '0x04', criticalWarningValue: 4, mediaErrors: 9,
+      failingNow: [{ name: 'Reallocated_Sector_Ct', id: 5 }, { name: 'Spin_Retry_Count', id: 10 }],
+      powerOnHours: 20000, powerCycles: 1200,
+    },
+  };
+
+  const r = buildReport(baseInput({
+    cpu: { model: 'Test CPU', loadPercent: 97, tempC: 96, clockGHz: 3.5 },
+    memory: { totalGB: 16, usedGB: 15, availableGB: 1, usedPercent: 94, swapTotalGB: 8, swapUsedGB: 6 },
+    storage: {
+      volumes: [{ mount: 'C:', sizeGB: 500, usedGB: 470, usePercent: 94 }],
+      disks: [], smart: [smartAttrs, { device: '/dev/sdb', healthy: false, status: 'failed' },
+        { device: '/dev/sdc', healthy: null, status: 'unknown' }],
+      smartctlAvailable: true, io: null,
+    },
+    network: { ping: { avgMs: 150, jitterMs: 40, lossPercent: 5 } },
+    system: { platform: 'win32', distro: 'Windows 11', driverErrors: [{ FriendlyName: 'Test Device' }] },
+  }));
+
+  // 한 리포트로는 서로 배타적인 판정을 동시에 낼 수 없다(위험 온도와 다소 높음은 함께 안 난다).
+  // 그래서 시나리오를 여러 개 돌려 카탈로그 전체를 훑는다.
+  const gpuHot = {
+    controllers: [{ model: 'Test GPU' }], supported: true,
+    nvidia: { loadPercent: 95, tempC: 92, clockMHz: 1500, vramUsedMB: 3000, vramTotalMB: 3072 },
+  };
+  const gpuWarm = {
+    controllers: [{ model: 'Test GPU' }], supported: true,
+    nvidia: { loadPercent: 95, tempC: 82, clockMHz: 1500, vramUsedMB: 500, vramTotalMB: 3072 },
+  };
+  const trend = (temps, clocks, load) => temps.map((t, i) => ({ tempC: t, clockMHz: clocks[i], loadPercent: load }));
+
+  const scenarios = [
+    r,
+    // GPU 위험 온도 + VRAM 한계 + VRAM 검사 불일치·컨텍스트 손실 + GPU 부하 스로틀링
+    buildReport(baseInput({
+      gpu: gpuHot,
+      vramCheck: vramCheckFixture({ verdict: 'issue', mismatchWords: 37, contextLost: true }),
+      gpuStressCheck: gpuStressFixture({ throttleSuspected: true, verdict: 'issue' }),
+    })),
+    // GPU 다소 높음 + 추이 기반 스로틀링 + 안전 한계 중단
+    buildReport(baseInput({
+      gpu: gpuWarm,
+      gpuTrend: trend([70, 74, 78], [2000, 1900, 1800], 95),
+      gpuStressCheck: gpuStressFixture({ abortReason: 'safety-temp', verdict: 'issue' }),
+    })),
+    // GPU 온도 상승하지만 클럭 유지 (스로틀링 판정 보류)
+    buildReport(baseInput({
+      gpu: gpuWarm,
+      gpuTrend: trend([70, 74, 78], [2000, 1990, 1985], 95),
+    })),
+    // CPU 고부하 상태에서 온도 높음 (위험 임계값 미만이라 critical이 아니다)
+    buildReport(baseInput({
+      cpu: { model: 'Test CPU', loadPercent: 85, tempC: 88, clockGHz: 3.9 },
+    })),
+    // CPU 추이 기반 스로틀링
+    buildReport(baseInput({
+      cpu: { model: 'Test CPU', loadPercent: 90, tempC: 70, clockGHz: 4.0 },
+      cpuTrend: [
+        { tempC: 70, clockGHz: 4.0, loadPercent: 90 },
+        { tempC: 73, clockGHz: 3.8, loadPercent: 90 },
+        { tempC: 76, clockGHz: 3.5, loadPercent: 90 },
+      ],
+    })),
+    // CPU 온도 상승·클럭 유지 (판정 보류) + CPU 온도 다소 높음
+    buildReport(baseInput({
+      cpu: { model: 'Test CPU', loadPercent: 90, tempC: 80, clockGHz: 4.0 },
+      cpuTrend: [
+        { tempC: 78, clockGHz: 4.0, loadPercent: 90 },
+        { tempC: 80, clockGHz: 4.0, loadPercent: 90 },
+        { tempC: 81, clockGHz: 3.95, loadPercent: 90 },
+      ],
+    })),
+    // 부하 테스트 실패·중단 계열
+    buildReport(baseInput({
+      deepTests: {
+        included: true,
+        cpuStress: { abortKind: 'worker-error', workerError: 'spawn failed', completed: false },
+        ramTest: { errors: 0, completed: false, error: 'alloc failed' },
+        storageTest: { errorStage: 'precheck', error: '여유 공간 부족', completed: false },
+      },
+    })),
+    buildReport(baseInput({
+      deepTests: {
+        included: true,
+        cpuStress: { abortKind: 'safety-temp', safetyTempC: 95, maxTempC: 95, completed: false },
+        ramTest: { errors: 128, completed: true, sizeMB: 512, patternsRun: 3, firstErrorOffset: 4096 },
+        storageTest: { verifyMismatch: true, completed: true },
+      },
+    })),
+    buildReport(baseInput({
+      deepTests: {
+        included: true,
+        cpuStress: {
+          completed: true, clockDroppedUnderLoad: true, maxTempC: 85,
+          maxClockGHz: 4.2, minClockGHz: 3.4, durationSec: 30, coreCount: 8,
+        },
+        storageTest: { completed: false, errorStage: 'write', error: 'EIO', ioErrors: 2 },
+      },
+    })),
+  ];
+
+  const exercised = new Set();
+  const untranslated = [];
+  scenarios.forEach((rep) => {
+    allIssues(localizeReport(rep, 'en')).filter((i) => i.msg && i.msg.id).forEach((i) => {
+      exercised.add(i.msg.id);
+      if (!i.translated) untranslated.push(i.msg.id);
+      // 번역된 이슈에 한글이 남아 있으면 안 된다. 단 OS/워커가 준 런타임 메시지는 예외다
+      // (Windows가 한국어로 말한 것을 영어로 지어내지 않는다 — explanation은 제외).
+      [i.title, ...(i.causes || []), ...(i.evidence || [])].forEach((t) => {
+        assert.ok(!/[가-힣]/.test(t), `${i.msg.id}: 한글이 남음 — ${t}`);
+      });
+    });
+  });
+
+  assert.deepStrictEqual([...new Set(untranslated)], [],
+    `id는 붙었는데 번역이 적용되지 않음(모양 불일치): ${[...new Set(untranslated)].join(', ')}`);
+
+  // 근거 줄 수가 조건부인 항목을 콕 집어 확인한다.
+  const first = allIssues(localizeReport(r, 'en')).filter((i) => i.msg && i.msg.id);
+  const wear = first.find((i) => i.msg.id === 'SMART-WEAR-HIGH');
+  assert.ok(wear && wear.evidence.length === 2 && wear.evidence[1].includes('320'),
+    `누적 쓰기량 줄이 빠짐: ${JSON.stringify(wear && wear.evidence)}`);
+  const failing = first.find((i) => i.msg.id === 'SMART-FAILING-NOW');
+  assert.ok(failing && failing.evidence.length === 2, '제조사 임계값 미달 근거 줄 수가 다름');
+
+  // ⚠ 아직 시나리오로 재현하지 못한 항목. **비워두는 것이 목표다.**
+  //    새 id를 추가하면 여기에 적히거나 위 시나리오로 발동돼야 한다 — 둘 다 아니면
+  //    "번역했다고 적어두고 한 번도 확인하지 않은" 상태가 된다.
+  const NOT_EXERCISED = [];
+  const catalogIds = Object.keys(require('../src/i18n/rules/en'));
+  const uncovered = catalogIds.filter((id) => !exercised.has(id) && !NOT_EXERCISED.includes(id));
+  assert.deepStrictEqual(uncovered, [],
+    `시나리오로 한 번도 발동시키지 못한 항목: ${uncovered.join(', ')}`);
+});
+
 test('rules.js의 메시지 id와 카탈로그가 정확히 대응한다', () => {
   // 오타 하나면 그 이슈는 조용히 한국어로 남는다. 눈으로는 못 잡는다.
   const src = require('fs').readFileSync(require('path').join(__dirname, '../src/engine/rules.js'), 'utf-8');
@@ -2845,10 +2994,17 @@ test('카탈로그의 모든 항목이 원문과 같은 모양이다', () => {
       assert.ok(typeof v === 'string' && v.trim(), `${id}: ${k}가 빈 문장`);
     });
     ['causes', 'actions'].forEach((k) => {
-      assert.ok(Array.isArray(e[k]) && e[k].length, `${id}: ${k}가 비었음`);
-      e[k].forEach((s) => assert.ok(typeof s === 'string' && s.trim(), `${id}: ${k}에 빈 항목`));
+      // 값에 따라 문구가 달라지는 항목은 배열 **전체**가 함수다. 원소 하나만 함수로 두면
+      // 번역기가 문자열이 아니라고 판단해 그 이슈가 통째로 한국어로 떨어진다.
+      const arr = typeof e[k] === 'function' ? e[k]({ over: true, failingNow: [] }) : e[k];
+      assert.ok(Array.isArray(arr) && arr.length, `${id}: ${k}가 비었음`);
+      arr.forEach((s) => assert.ok(typeof s === 'string' && s.trim(),
+        `${id}: ${k}에 문자열이 아닌 항목이 있음 (배열 전체를 함수로 두세요)`));
     });
-    assert.ok(e.verification && String(e.verification).trim(), `${id}: 재검사 방법 없음`);
+    // verification이 없어도 되는 이슈가 있다(원문에도 없는 경우). 있으면 비어 있으면 안 된다.
+    if (e.verification !== undefined) {
+      assert.ok(String(e.verification).trim(), `${id}: 재검사 방법이 빈 문자열`);
+    }
     // 영어 카탈로그에 한글이 남아 있으면 안 된다(런타임 메시지 보간은 params라 여기 없다).
     const flat = JSON.stringify([
       typeof e.title === 'function' ? e.title({ errors: 0 }) : e.title,
